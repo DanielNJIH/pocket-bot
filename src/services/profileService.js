@@ -28,6 +28,24 @@ export async function getUserProfile(pool, discordUserId) {
   };
 }
 
+export async function updateDisplayName(pool, discordUserId, displayName) {
+  await ensureUserRecord(pool, discordUserId);
+  await pool.query('UPDATE users SET display_name = ? WHERE discord_user_id = ?', [
+    displayName,
+    discordUserId
+  ]);
+}
+
+export async function updateAbout(pool, discordUserId, about) {
+  await ensureUserRecord(pool, discordUserId);
+  await pool.query('UPDATE users SET about = ? WHERE discord_user_id = ?', [about, discordUserId]);
+}
+
+export async function updateBirthday(pool, discordUserId, birthday) {
+  await ensureUserRecord(pool, discordUserId);
+  await pool.query('UPDATE users SET birthday = ? WHERE discord_user_id = ?', [birthday, discordUserId]);
+}
+
 export async function upsertUserPreference(pool, discordUserId, preferences) {
   await ensureUserRecord(pool, discordUserId);
   await pool.query('UPDATE users SET preferences = ? WHERE discord_user_id = ?', [
@@ -42,4 +60,19 @@ export async function upsertCodewords(pool, discordUserId, codewords) {
     JSON.stringify(codewords || []),
     discordUserId
   ]);
+}
+
+export async function findUserByDisplayName(pool, name) {
+  const [rows] = await pool.query('SELECT * FROM users WHERE display_name = ?', [name]);
+  return rows[0];
+}
+
+export async function getUserByDiscordId(pool, discordUserId) {
+  const [rows] = await pool.query('SELECT * FROM users WHERE discord_user_id = ?', [discordUserId]);
+  return rows[0] || null;
+}
+
+export function serializePreferences(preferencesText) {
+  if (!preferencesText) return {};
+  return { notes: preferencesText };
 }
