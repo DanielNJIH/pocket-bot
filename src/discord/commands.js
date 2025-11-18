@@ -1,4 +1,4 @@
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { env } from '../config/env.js';
 import { ensureGuildRecord, updateSelectedUser } from '../services/guildSettingsService.js';
 import { ensureUserRecord } from '../services/profileService.js';
@@ -10,8 +10,7 @@ const setSelectedUserCommand = {
     .setDescription('Assign the user this bot instance should listen to in this guild')
     .addUserOption((option) =>
       option.setName('user').setDescription('The Discord user this bot should follow').setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    ),
   async execute(interaction, context) {
     if (!interaction.guild) {
       await interaction.reply({

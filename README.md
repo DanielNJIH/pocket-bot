@@ -29,8 +29,10 @@ schema.sql         // MySQL schema for phpMyAdmin or CLI import
 3. Install dependencies: `npm install`.
 4. Start the bot: `npm start`.
 
+The Gemini client defaults to the free `gemini-1.5-flash-latest` model from AI Studio; override with `GEMINI_MODEL` in `.env` if you want a different model.
+
 ### Slash commands
-- `/set-selected-user` (Manage Server only): choose which guild member this bot instance should listen to.
+- `/set-selected-user`: choose which guild member this bot instance should listen to.
 - `/bot-status`: show the current bot instance number and which user is selected for this guild.
 
 ### Birthday alerts
