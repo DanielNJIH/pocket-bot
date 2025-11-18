@@ -2,6 +2,60 @@ import { getLevelRoles, getLevelThresholds } from './guildSettingsService.js';
 import { logDebug } from '../utils/logger.js';
 
 const XP_COOLDOWN_MS = 5000;
+const MAX_LEVEL = 999;
+const LEVEL_BLOCK_SIZE = 5;
+const LEVEL_BLOCK_GROWTH = 0.2; // 20% every 5 levels
+
+function getBaseGap(thresholds) {
+  if (!thresholds?.length) return 100;
+
+  const sorted = [...thresholds]
+    .filter((entry) => typeof entry?.level === 'number' && typeof entry?.threshold === 'number')
+    .sort((a, b) => a.level - b.level);
+
+  let smallestGap = Infinity;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const gap = sorted[i].threshold - sorted[i - 1].threshold;
+    if (gap > 0 && gap < smallestGap) {
+      smallestGap = gap;
+    }
+  }
+
+  return Number.isFinite(smallestGap) ? smallestGap : 100;
+}
+
+function buildThresholds(thresholds) {
+  const sorted = [...thresholds]
+    .filter((entry) => typeof entry?.level === 'number' && typeof entry?.threshold === 'number')
+    .sort((a, b) => a.level - b.level);
+
+  const provided = new Map(sorted.map((entry) => [entry.level, entry.threshold]));
+  const baseThreshold = provided.get(1) ?? 0;
+  const baseGap = getBaseGap(sorted);
+
+  const scaled = [{ level: 1, threshold: baseThreshold }];
+  let runningThreshold = baseThreshold;
+
+  for (let level = 2; level <= MAX_LEVEL; level += 1) {
+    const providedThreshold = provided.get(level);
+    if (typeof providedThreshold === 'number') {
+      runningThreshold = providedThreshold;
+    } else {
+      const blockIndex = Math.floor((level - 2) / LEVEL_BLOCK_SIZE);
+      const gap = Math.max(Math.round(baseGap * (1 + LEVEL_BLOCK_GROWTH * blockIndex)), 1);
+      runningThreshold += gap;
+    }
+
+    scaled.push({ level, threshold: runningThreshold });
+  }
+
+  return scaled;
+}
+
+async function getScaledThresholds(pool, guildId) {
+  const thresholds = await getLevelThresholds(pool, guildId);
+  return buildThresholds(thresholds);
+}
 
 function applyThresholdGrowth(thresholds, growthRate = 0.05) {
   if (!thresholds?.length) return [];
