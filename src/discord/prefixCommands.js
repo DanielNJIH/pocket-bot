@@ -387,18 +387,18 @@ async function handleXp(message, context, guildRow, tokens) {
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
       .setAuthor({
-        name: `${discordUser.username || discordUser.tag || 'User'} — XP Übersicht`,
+        name: `${discordUser.username || discordUser.tag || 'User'} — XP Overview`,
         iconURL: discordUser.displayAvatarURL()
       })
       .setThumbnail(discordUser.displayAvatarURL())
       .addFields(
         { name: 'Level', value: `${progress.level}`, inline: true },
-        { name: 'Gesamt-XP', value: `${progress.xp}`, inline: true },
-        { name: 'Nächstes Level', value: nextLevelText, inline: true },
-        { name: 'Fortschritt', value: `${progressBar} (${Math.round(progress.progress * 100)}%)`, inline: false },
-        { name: 'Nächster Rang', value: nextRankText, inline: false }
+        { name: 'Total XP', value: `${progress.xp}`, inline: true },
+        { name: 'Next level', value: nextLevelText, inline: true },
+        { name: 'Progress', value: `${progressBar} (${Math.round(progress.progress * 100)}%)`, inline: false },
+        { name: 'Next rank', value: nextRankText, inline: false }
       )
-      .setFooter({ text: `XP pro Nachricht: ${guildRow.xp_per_interaction} | Abklingzeit: 5s` });
+      .setFooter({ text: `XP per message: ${guildRow.xp_per_interaction} | Cooldown: 5s` });
     await message.reply({ embeds: [embed] });
     return true;
   }
@@ -443,7 +443,7 @@ async function handleLeaderboard(message, context, guildRow, tokens) {
     .setColor(0xf1c40f)
     .setTitle('XP Leaderboard')
     .setDescription(description)
-    .setFooter({ text: `Top ${rows.length} · XP pro Nachricht: ${guildRow.xp_per_interaction}` });
+    .setFooter({ text: `Top ${rows.length} · XP per message: ${guildRow.xp_per_interaction}` });
   await message.reply({ embeds: [embed] });
   return true;
 }
