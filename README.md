@@ -29,6 +29,47 @@ schema.sql         // MySQL schema for phpMyAdmin or CLI import
 3. Install dependencies: `npm install`.
 4. Start the bot: `npm start`.
 
+## Slash command overview
+All configuration and data entry runs through slash commands so every bot instance can share the same settings. Commands marked (Admin) require guild management permission.
+
+### Access & triggers
+- `/assign user:<@user>` (Admin) — set the guild’s Selected User the bot will respond to.
+- `/codeword add word:<text>` — add a trigger word for the Selected User.
+- `/codeword remove word:<text>` — remove a trigger word for the Selected User.
+- `/codeword list` — list the active trigger words for the Selected User.
+
+### Profiles & birthdays
+- `/profile set-name name:<text>` — store the name the bot should use for the user.
+- `/profile set-about text:<text>` — set the user’s short “about me”.
+- `/profile set-preferences text:<text>` — update preferences or interests.
+- `/profile set-birthday date:<YYYY-MM-DD>` — set the user’s birthday.
+- `/profile show user:<@user|name>` — show the stored profile for a Discord user or stored name.
+- `/birthday-channel set channel:<#channel>` (Admin) — choose where upcoming-birthday heads-ups are sent.
+- `/birthday when user:<@user|name>` — ask when the stored birthday is.
+
+### Rules
+- `/rules add name:<text> type:<game|server|custom> summary:<text> content:<text>` (Admin or Selected User) — create a ruleset.
+- `/rules remove name:<text>` (Admin) — delete a ruleset by name.
+- `/rules list [type:<...>]` — list rulesets (optionally filter by type).
+- `/rules show name:<text>` — display a ruleset so the AI can reference it.
+
+### XP & roles
+- `/xp [user:<@user>]` — show XP and level (defaults to the Selected User in the guild).
+- `/leaderboard [limit:<number>]` — show the top users by XP in the guild.
+- `/xprole add level:<number> role:<@role>` (Admin) — award a role when a level is reached.
+- `/xprole remove level:<number>` (Admin) — remove a level → role mapping.
+- `/xpchannel set channel:<#channel>` (Admin) — set the level-up announcement channel.
+- `/xp set-amount amount:<number>` (Admin) — set XP per interaction for this guild.
+- `/xp reset user:<@user>` (Admin) — reset a user’s XP/level in this guild.
+- `/xp toggle enabled:<true|false>` (Admin) — enable or disable XP accrual.
+
+### Languages, memory, and diagnostics
+- `/language set primary:<code> [secondary:<code>] [secondary_enabled:<true|false>]` (Admin) — configure guild language preferences.
+- `/memory add content:<text>` — add a lightweight memory entry for the Selected User in this guild.
+- `/memory list [user:<@user|name>]` — view stored memory entries.
+- `/memory clear id:<entry_id>` (Admin) — remove a memory entry.
+- `/settings show` (Admin) — dump the guild configuration for quick inspection.
+
 ### Birthday alerts
 - Set `birthday_channel_id` in the `guilds` table to the target text channel ID for birthday heads-ups.
 - Store user birthdays in the `users` table (`birthday` column) to enable the announcements.
