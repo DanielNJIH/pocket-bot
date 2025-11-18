@@ -12,14 +12,13 @@ import { handlePrefixCommand } from '../discord/prefixCommands.js';
 
 export const name = Events.MessageCreate;
 
-async function isReplyToBot(message, client) {
-  if (!message.reference?.messageId) return false;
+async function fetchReferencedMessage(message) {
+  if (!message.reference?.messageId) return null;
   try {
-    const ref = await message.channel.messages.fetch(message.reference.messageId);
-    return ref.author.id === client.user.id;
+    return await message.channel.messages.fetch(message.reference.messageId);
   } catch (err) {
     logDebug('Failed to fetch referenced message', { error: err?.message });
-    return false;
+    return null;
   }
 }
 
@@ -54,7 +53,14 @@ export async function execute(message, context) {
 
   const mentioned = message.mentions.has(client.user);
   const codewordHit = hasCodewordHit(message.content, userProfile.codewords);
-  const replyTriggered = await isReplyToBot(message, client);
+  const referencedMessage = mentioned || message.reference ? await fetchReferencedMessage(message) : null;
+  const replyTriggered = referencedMessage?.author.id === client.user.id;
+  const replyContext = mentioned && referencedMessage
+    ? {
+        author: referencedMessage.author.tag || referencedMessage.author.username || referencedMessage.author.id,
+        content: referencedMessage.cleanContent || referencedMessage.content
+      }
+    : null;
 
   if (!mentioned && !codewordHit && !replyTriggered) {
     return;
@@ -71,7 +77,8 @@ export async function execute(message, context) {
       userProfile,
       memories,
       rules,
-      message: message.cleanContent
+      message: message.cleanContent,
+      replyContext
     });
 
     const response = await generateResponse(prompt);

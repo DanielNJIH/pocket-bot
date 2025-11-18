@@ -1,6 +1,13 @@
 import { env } from '../config/env.js';
 
-export function buildPrompt({ guildSettings, userProfile, memories = [], rules = [], message }) {
+export function buildPrompt({
+  guildSettings,
+  userProfile,
+  memories = [],
+  rules = [],
+  message,
+  replyContext
+}) {
   const languageLine = guildSettings.secondary_language_enabled
     ? `Primary language: ${guildSettings.primary_language || 'en'} | Secondary language: ${
         guildSettings.secondary_language || 'none'
@@ -19,6 +26,10 @@ export function buildPrompt({ guildSettings, userProfile, memories = [], rules =
         .join(', ')
     : 'unknown';
 
+  const replyLine = replyContext
+    ? `Replied message from ${replyContext.author}: ${replyContext.content}`
+    : '';
+
   return [
     `System: You are ${env.botName}, a personal pocket friend. Personality: ${env.botPersonality}.`,
     'Always respect these guardrails:',
@@ -35,6 +46,7 @@ export function buildPrompt({ guildSettings, userProfile, memories = [], rules =
     ruleSnippets ? `Relevant rules:\n${ruleSnippets}` : '',
     '',
     `User said: ${message}`,
+    replyLine,
     'Reply as their bonded pocket friend.'
   ]
     .filter(Boolean)

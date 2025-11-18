@@ -9,21 +9,15 @@ function buildModelCandidates(modelName) {
 
   if (modelName) {
     names.push(modelName);
-    // If the configured model omits the "-latest" alias, try adding it as a fallback.
     if (!/-latest$/.test(modelName)) {
       names.push(`${modelName}-latest`);
     }
   }
 
-  // Always include sensible defaults last.
-  names.push(
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-latest'
-  );
+  if (!names.length) {
+    names.push('gemini-2.0-flash');
+  }
 
-  // Deduplicate while preserving order.
   return [...new Set(names)];
 }
 
@@ -35,23 +29,25 @@ async function attemptGeneration(modelName, prompt) {
 
 export async function generateResponse(prompt) {
   const candidates = buildModelCandidates(env.geminiModel);
+  let lastError;
 
   for (const name of candidates) {
     try {
       return await attemptGeneration(name, prompt);
     } catch (err) {
-      // Retry on model lookup errors, rethrow everything else.
       const status = err?.status || err?.response?.status;
       const message = err?.message || '';
       const isNotFound = status === 404 || /not found/i.test(message);
-
-      logError(`Gemini generateContent failed for model ${name}`, err);
+      lastError = err;
 
       if (!isNotFound) {
+        logError(`Gemini generateContent failed for model ${name}`, err);
         throw err;
       }
+
+      logError(`Gemini model ${name} unavailable, trying next candidate`, { status, message });
     }
   }
 
-  throw new Error(`All Gemini model attempts failed: ${candidates.join(', ')}`);
+  throw lastError || new Error(`All Gemini model attempts failed: ${candidates.join(', ')}`);
 }

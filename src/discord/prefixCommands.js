@@ -1,11 +1,13 @@
 import { env } from '../config/env.js';
+import { PermissionsBitField } from 'discord.js';
 import {
   updateSelectedUser,
   setBirthdayChannel,
   setXpAnnouncementChannel,
   setXpPerInteraction,
   toggleXp,
-  updateLanguages
+  updateLanguages,
+  getLevelRoles
 } from '../services/guildSettingsService.js';
 import {
   addRule,
@@ -45,27 +47,29 @@ import { logDebug, logError } from '../utils/logger.js';
 
 const PREFIX = '!sys';
 
-const HELP_TEXT = [
-  '**Pocket Friend `!sys` commands**',
+const USER_HELP_LINES = [
   '- `!sys help` — show this help.',
-  '- `!sys assign @user` — set the selected user (only the current selected user can change it).',
-  '- `!sys codeword <add|remove|list> <word>` — manage trigger codewords.',
+  '- `!sys codeword <add|remove|list> <word>` — manage your trigger codewords.',
   '- `!sys profile set-name <text>` / `set-about <text>` / `set-preferences <text>` / `set-birthday <YYYY-MM-DD>` — update your profile.',
   '- `!sys profile show [@user|name]` — display a stored profile.',
-  '- `!sys birthday-channel set #channel` — choose the channel for birthday heads-ups.',
   '- `!sys birthday when [@user|name]` — show a saved birthday.',
-  '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules.',
+  '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules (selected user only).',
   '- `!sys rules remove <name>` / `list [type]` / `show <name>` — manage rules.',
-  '- `!sys xp [@user|id]` — view XP. `set-amount <number>` sets XP per interaction. `reset @user` resets XP. `toggle <true|false>` enables or disables XP.',
-  '- `!sys leaderboard [limit]` — show top XP earners.',
-  '- `!sys xprole <add|remove> <level> @role` — map levels to roles.',
+  '- `!sys xp` — see your XP and level.',
+  '- `!sys leaderboard [limit]` — show top XP earners (if you are the selected user).',
+  '- `!sys memory <add|list|clear> ...` — manage your memories.',
+  '- `!sys settings show` — show current guild settings.'
+];
+
+const ADMIN_HELP_LINES = [
+  '- `!sys assign @user` — set the selected user (admin only).',
+  '- `!sys birthday-channel set #channel` — choose the channel for birthday heads-ups.',
   '- `!sys xpchannel set #channel` — set the level-up announcement channel.',
-  '- `!sys language set primary:<code> secondary:<code?> secondary_enabled:<true|false?>` — configure guild languages.',
-  '- `!sys memory <add|list|clear> ...` — manage lightweight memories.',
-  '- `!sys settings show` — show current guild settings.',
-  '',
-  'The bot replies only to the selected user when they ping the bot, use a configured codeword, or reply directly to the bot.'
-].join('\n');
+  '- `!sys xp set-amount <number>` / `toggle <true|false>` / `reset @user` — administer XP.',
+  '- `!sys xprole list` — list level → role rewards.',
+  '- `!sys xprole <add|remove> <level> @role` — manage level rewards.',
+  '- `!sys language set primary:<code> secondary:<code?> secondary_enabled:<true|false?>` — configure guild languages.'
+];
 
 function tokenize(input) {
   const matches = input.match(/"([^"]*)"|'([^']*)'|[^\s]+/g) || [];
@@ -88,6 +92,16 @@ function formatRule(rule) {
   return `**${rule.name}** [${rule.type}]\n${rule.summary ? `${rule.summary}\n` : ''}${rule.content}`;
 }
 
+function isAdmin(message) {
+  return message.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild);
+}
+
+function assertAdmin(message) {
+  if (!isAdmin(message)) {
+    throw new Error('Only server admins can run this command.');
+  }
+}
+
 async function resolveUserFromArg(pool, arg) {
   if (!arg) return null;
   const mentionMatch = arg.match(/<(?:@|@!)?(\d+)>/);
@@ -101,30 +115,39 @@ async function resolveUserFromArg(pool, arg) {
 }
 
 async function assertSelectedUser(message, guildRow) {
+  return assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: false });
+}
+
+function assertSelectedUserOrAdmin(message, guildRow, { allowAdmin } = { allowAdmin: true }) {
   if (!guildRow.selected_discord_user_id) {
     throw new Error('No selected user configured for this guild. Use `!sys assign @user` first.');
   }
-  if (message.author.id !== guildRow.selected_discord_user_id) {
-    throw new Error('Only the selected user can run these commands.');
+  if (message.author.id === guildRow.selected_discord_user_id) {
+    return true;
   }
+  if (allowAdmin && isAdmin(message)) {
+    return true;
+  }
+  throw new Error('Only the selected user can run these commands.');
 }
 
-async function handleHelp(message) {
-  await message.reply(HELP_TEXT);
+async function handleHelp(message, isAdminUser) {
+  const lines = ['**Pocket Friend `!sys` commands**', ...USER_HELP_LINES];
+  if (isAdminUser) {
+    lines.push('', 'Admin controls:', ...ADMIN_HELP_LINES);
+  }
+  lines.push('', 'The bot replies only to the selected user when they ping the bot, use a configured codeword, or reply directly to the bot.');
+  await message.reply(lines.join('\n'));
   return true;
 }
 
 async function handleAssign(message, context, guildRow, argsText) {
+  assertAdmin(message);
   const { pool } = context;
   const tokens = tokenize(argsText);
   const target = tokens[0];
   if (!target) {
     await message.reply('Usage: `!sys assign @user`');
-    return true;
-  }
-
-  if (guildRow.selected_discord_user_id && guildRow.selected_discord_user_id !== message.author.id) {
-    await message.reply('Only the selected user can change the assignment.');
     return true;
   }
 
@@ -236,7 +259,7 @@ async function handleProfile(message, context, guildRow, tokens, fullText) {
 
 async function handleBirthdayChannel(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertAdmin(message);
   if (tokens[0] !== 'set') {
     await message.reply('Usage: `!sys birthday-channel set #channel`');
     return true;
@@ -253,7 +276,7 @@ async function handleBirthdayChannel(message, context, guildRow, tokens) {
 
 async function handleBirthdayWhen(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
   const targetArg = tokens.join(' ');
   const user = targetArg ? await resolveUserFromArg(pool, targetArg) : await ensureUserRecord(pool, message.author.id);
   if (!user) {
@@ -267,7 +290,7 @@ async function handleBirthdayWhen(message, context, guildRow, tokens) {
 
 async function handleRules(message, context, guildRow, tokens, rawText) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
   const action = tokens[0];
   const remainder = rawText.slice(action?.length || 0).trim();
 
@@ -281,12 +304,13 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
       await message.reply('Usage: `!sys rules add name:"Raid" type:game summary:"..." content:"details"`');
       return true;
     }
+    const creator = await ensureUserRecord(pool, message.author.id);
     await addRule(pool, guildRow.id, {
       name,
       type,
       summary,
       content,
-      createdByUserId: guildRow.selected_user_id
+      createdByUserId: creator.id
     });
     await message.reply(`Rule **${name}** saved.`);
     return true;
@@ -330,17 +354,22 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
 
 async function handleXp(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
+  const isAdminUser = isAdmin(message);
   const sub = tokens[0];
 
   if (!sub || /^[0-9<@]/.test(sub)) {
     const targetUser = sub ? await resolveUserFromArg(pool, sub) : await ensureUserRecord(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
+    if (!isAdminUser && targetUser.discord_user_id !== message.author.id) {
+      return message.reply('You can only view your own XP.');
+    }
     const stats = await getUserStats(pool, guildRow.id, targetUser.id);
     return message.reply(`XP for <@${targetUser.discord_user_id}> — Level ${stats.level}, XP ${stats.xp}`);
   }
 
   if (sub === 'set-amount') {
+    assertAdmin(message);
     const amount = Number(tokens[1]);
     if (Number.isNaN(amount)) return message.reply('Provide a numeric amount.');
     await setXpPerInteraction(pool, guildRow.id, amount);
@@ -348,6 +377,7 @@ async function handleXp(message, context, guildRow, tokens) {
   }
 
   if (sub === 'reset') {
+    assertAdmin(message);
     const targetUser = await resolveUserFromArg(pool, tokens[1]);
     if (!targetUser) return message.reply('User not found.');
     await resetUserStats(pool, guildRow.id, targetUser.id);
@@ -355,6 +385,7 @@ async function handleXp(message, context, guildRow, tokens) {
   }
 
   if (sub === 'toggle') {
+    assertAdmin(message);
     const enabled = tokens[1]?.toLowerCase() === 'true';
     await toggleXp(pool, guildRow.id, enabled);
     return message.reply(`XP has been ${enabled ? 'enabled' : 'disabled'}.`);
@@ -366,7 +397,7 @@ async function handleXp(message, context, guildRow, tokens) {
 
 async function handleLeaderboard(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
   const limit = Number(tokens[0]) || 10;
   const rows = await getLeaderboard(pool, guildRow.id, limit);
   if (!rows.length) return message.reply('No XP data yet.');
@@ -379,11 +410,23 @@ async function handleLeaderboard(message, context, guildRow, tokens) {
 
 async function handleXpRole(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertAdmin(message);
   const action = tokens[0];
   const level = Number(tokens[1]);
+
+  if (action === 'list') {
+    const mappings = await getLevelRoles(pool, guildRow.id);
+    if (!mappings.length) {
+      await message.reply('No level rewards configured.');
+      return true;
+    }
+    const lines = mappings.map((row) => `Level ${row.level} → <@&${row.role_id}>`);
+    await message.reply(lines.join('\n'));
+    return true;
+  }
+
   if (Number.isNaN(level)) {
-    await message.reply('Usage: `!sys xprole <add|remove> <level> @role`');
+    await message.reply('Usage: `!sys xprole list` or `!sys xprole <add|remove> <level> @role`');
     return true;
   }
   if (action === 'add') {
@@ -404,13 +447,13 @@ async function handleXpRole(message, context, guildRow, tokens) {
     await message.reply(result.affectedRows ? 'Mapping removed.' : 'No mapping existed for that level.');
     return true;
   }
-  await message.reply('Usage: `!sys xprole <add|remove> <level> @role`');
+  await message.reply('Usage: `!sys xprole list` or `!sys xprole <add|remove> <level> @role`');
   return true;
 }
 
 async function handleXpChannel(message, context, guildRow, tokens) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertAdmin(message);
   if (tokens[0] !== 'set') return message.reply('Usage: `!sys xpchannel set #channel`');
   const channelId = message.mentions.channels.first()?.id || tokens[1];
   if (!channelId) return message.reply('Please mention a channel.');
@@ -420,7 +463,7 @@ async function handleXpChannel(message, context, guildRow, tokens) {
 
 async function handleLanguage(message, context, guildRow, tokens, raw) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
+  assertAdmin(message);
   if (tokens[0] !== 'set') return message.reply('Usage: `!sys language set primary:<code> secondary:<code?> secondary_enabled:<true|false?>`');
   const args = parseKeyValueArgs(raw);
   const primary = args.primary || tokens[1];
@@ -465,7 +508,7 @@ async function handleMemory(message, context, guildRow, tokens, rawText) {
 }
 
 async function handleSettingsShow(message, context, guildRow) {
-  await assertSelectedUser(message, guildRow);
+  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
   const settings = [
     `Primary language: ${guildRow.primary_language}`,
     `Secondary language: ${guildRow.secondary_language || 'none'} (enabled: ${guildRow.secondary_language_enabled ? 'yes' : 'no'})`,
@@ -515,11 +558,21 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const tokens = tokenize(withoutPrefix);
   const command = tokens.shift();
   const rawAfterCommand = withoutPrefix.slice(command.length).trim();
+  const isAdminUser = isAdmin(message);
+
+  if (
+    command !== 'help' &&
+    !isAdminUser &&
+    guildRow.selected_discord_user_id &&
+    message.author.id !== guildRow.selected_discord_user_id
+  ) {
+    return true;
+  }
 
   try {
     switch (command) {
       case 'help':
-        return await handleHelp(message);
+        return await handleHelp(message, isAdminUser);
       case 'assign':
         return await handleAssign(message, context, guildRow, rawAfterCommand);
       case 'codeword':
