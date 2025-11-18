@@ -19,10 +19,11 @@ export async function ensureUserRecord(pool, discordUserId) {
   return ensureUserRecord(pool, discordUserId);
 }
 
-export async function getUserProfile(pool, discordUserId) {
+export async function getUserProfile(pool, discordUserId, { discordName } = {}) {
   const user = await ensureUserRecord(pool, discordUserId);
   return {
     ...user,
+    discord_name: discordName,
     preferences: parseJson(user.preferences),
     codewords: parseJson(user.codewords) || []
   };
@@ -70,6 +71,23 @@ export async function findUserByDisplayName(pool, name) {
 export async function getUserByDiscordId(pool, discordUserId) {
   const [rows] = await pool.query('SELECT * FROM users WHERE discord_user_id = ?', [discordUserId]);
   return rows[0] || null;
+}
+
+export async function getGuildUserProfiles(pool, discordGuildId) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT u.*
+     FROM users u
+     JOIN user_guild_stats s ON s.user_id = u.id
+     JOIN guilds g ON g.id = s.guild_id
+     WHERE g.discord_guild_id = ?`,
+    [discordGuildId]
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    preferences: parseJson(row.preferences),
+    codewords: parseJson(row.codewords) || []
+  }));
 }
 
 export function serializePreferences(preferencesText) {

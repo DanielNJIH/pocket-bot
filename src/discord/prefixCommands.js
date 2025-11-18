@@ -48,6 +48,47 @@ import { logDebug, logError } from '../utils/logger.js';
 
 const PREFIX = '!sys';
 
+class PermissionError extends Error {
+  constructor(message, { silent = false } = {}) {
+    super(message);
+    this.name = 'PermissionError';
+    this.silent = silent;
+  }
+}
+
+function getDiscordNameFallback(message, userId) {
+  if (userId === message.author.id) {
+    return (
+      message.member?.displayName ||
+      message.author.globalName ||
+      message.author.username ||
+      message.author.tag ||
+      null
+    );
+  }
+  const cached = message.client.users.cache.get(userId);
+  return cached?.globalName || cached?.username || cached?.tag || null;
+}
+
+async function fetchDiscordUser(message, userId) {
+  try {
+    return await message.client.users.fetch(userId);
+  } catch (err) {
+    logDebug('Could not fetch Discord user for profile fallback', { userId, error: err?.message });
+    return null;
+  }
+}
+
+function calculateAge(birthday) {
+  if (!birthday) return null;
+  const birthDate = new Date(birthday);
+  if (Number.isNaN(birthDate.getTime())) return null;
+  return Math.max(
+    0,
+    Math.floor((Date.now() - birthDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+  );
+}
+
 const USER_HELP_LINES = [
   '- `!sys help` — show this help.',
   '- `!sys codeword <add|remove|list> <word>` — manage your trigger codewords.',
@@ -105,8 +146,30 @@ function isAdmin(message) {
 
 function assertAdmin(message) {
   if (!isAdmin(message)) {
-    throw new Error('Only server admins can run this command.');
+    throw new PermissionError('Missing permissions or incorrect user.');
   }
+}
+
+function enforcePrefixAccess(message, guildRow, command, { allowAdminOverride = false } = {}) {
+  const hasSelection = Boolean(guildRow.selected_discord_user_id);
+  const isSelectedUser = message.author.id === guildRow.selected_discord_user_id;
+  const isAdminUser = isAdmin(message);
+
+  if (!hasSelection) {
+    if (command === 'assign' && isAdminUser) return true;
+    if (command === 'help') return true;
+    throw new PermissionError('Missing permissions or incorrect user.');
+  }
+
+  if (allowAdminOverride && isAdminUser) {
+    return true;
+  }
+
+  if (!isSelectedUser) {
+    throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
+  }
+
+  return true;
 }
 
 async function resolveUserFromArg(pool, arg) {
@@ -127,7 +190,7 @@ async function assertSelectedUser(message, guildRow) {
 
 function assertSelectedUserOrAdmin(message, guildRow, { allowAdmin } = { allowAdmin: true }) {
   if (!guildRow.selected_discord_user_id) {
-    throw new Error('No selected user configured for this guild. Use `!sys assign @user` first.');
+    throw new PermissionError('Missing permissions or incorrect user.');
   }
   if (message.author.id === guildRow.selected_discord_user_id) {
     return true;
@@ -135,7 +198,7 @@ function assertSelectedUserOrAdmin(message, guildRow, { allowAdmin } = { allowAd
   if (allowAdmin && isAdmin(message)) {
     return true;
   }
-  throw new Error('Only the selected user can run these commands.');
+  throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
 }
 
 async function handleHelp(message, isAdminUser) {
@@ -176,7 +239,9 @@ async function handleCodeword(message, context, guildRow, tokens) {
   const action = tokens[0];
   const word = tokens.slice(1).join(' ');
 
-  const profile = await getUserProfile(pool, message.author.id);
+  const profile = await getUserProfile(pool, message.author.id, {
+    discordName: getDiscordNameFallback(message, message.author.id)
+  });
   const codewords = profile.codewords || [];
 
   if (action === 'add') {
@@ -214,47 +279,58 @@ async function handleCodeword(message, context, guildRow, tokens) {
 
 async function handleProfile(message, context, guildRow, tokens, fullText) {
   const { pool } = context;
-  await assertSelectedUser(message, guildRow);
   const action = tokens[0];
   const rest = fullText.slice(action?.length || 0).trim();
 
   if (action === 'set-name') {
+    await assertSelectedUser(message, guildRow);
     if (!rest) return message.reply('Provide a display name.');
     await updateDisplayName(pool, message.author.id, rest);
     return message.reply(`Saved display name as **${rest}**.`);
   }
 
   if (action === 'set-about') {
+    await assertSelectedUser(message, guildRow);
     if (!rest) return message.reply('Provide an about blurb.');
     await updateAbout(pool, message.author.id, rest);
     return message.reply('Updated your about me.');
   }
 
   if (action === 'set-preferences') {
+    await assertSelectedUser(message, guildRow);
     if (!rest) return message.reply('Provide preferences text.');
     await upsertUserPreference(pool, message.author.id, serializePreferences(rest));
     return message.reply('Preferences saved.');
   }
 
   if (action === 'set-birthday') {
+    await assertSelectedUser(message, guildRow);
     if (!rest) return message.reply('Provide a birthday in YYYY-MM-DD.');
     await updateBirthday(pool, message.author.id, rest);
     return message.reply('Birthday updated.');
   }
 
   if (action === 'show') {
+    await assertSelectedUser(message, guildRow);
     const targetArg = rest;
     const targetUser = targetArg ? await resolveUserFromArg(pool, targetArg) : await ensureUserRecord(pool, message.author.id);
     if (!targetUser) return message.reply('Could not find that user.');
-    const profile = await getUserProfile(pool, targetUser.discord_user_id);
+    const discordUser = await fetchDiscordUser(message, targetUser.discord_user_id);
+    const profile = await getUserProfile(pool, targetUser.discord_user_id, {
+      discordName: getDiscordNameFallback(message, targetUser.discord_user_id) ||
+        discordUser?.globalName ||
+        discordUser?.username ||
+        discordUser?.tag
+    });
     const codewords = profile.codewords?.join(', ') || 'none';
+    const age = calculateAge(profile.birthday);
     return message.reply(
       [
         `Profile for <@${profile.discord_user_id}>`,
-        `Name: ${profile.display_name || 'Unknown'}`,
+        `Name: ${profile.display_name || profile.discord_name || 'Unknown'}`,
         `About: ${profile.about || 'Not set'}`,
         `Preferences: ${profile.preferences ? JSON.stringify(profile.preferences) : 'Not set'}`,
-        `Birthday: ${profile.birthday || 'Not set'}`,
+        `Birthday: ${profile.birthday || 'Not set'}${age !== null ? ` (Age: ${age})` : ''}`,
         `Codewords: ${codewords}`
       ].join('\n')
     );
@@ -290,7 +366,9 @@ async function handleBirthdayWhen(message, context, guildRow, tokens) {
     await message.reply('User not found.');
     return true;
   }
-  const profile = await getUserProfile(pool, user.discord_user_id);
+  const profile = await getUserProfile(pool, user.discord_user_id, {
+    discordName: getDiscordNameFallback(message, user.discord_user_id)
+  });
   await message.reply(`Birthday for <@${profile.discord_user_id}>: ${profile.birthday || 'Not set'}`);
   return true;
 }
@@ -361,14 +439,13 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
 
 async function handleXp(message, context, guildRow, tokens) {
   const { pool } = context;
-  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
-  const isAdminUser = isAdmin(message);
   const sub = tokens[0];
 
   if (!sub || /^[0-9<@]/.test(sub)) {
+    await assertSelectedUser(message, guildRow);
     const targetUser = sub ? await resolveUserFromArg(pool, sub) : await ensureUserRecord(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
-    if (!isAdminUser && targetUser.discord_user_id !== message.author.id) {
+    if (targetUser.discord_user_id !== message.author.id) {
       return message.reply('You can only view your own XP.');
     }
     const progress = await getUserProgress(pool, guildRow.id, targetUser.id);
@@ -432,9 +509,9 @@ async function handleXp(message, context, guildRow, tokens) {
 
 async function handleLeaderboard(message, context, guildRow, tokens) {
   const { pool } = context;
-  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
+  await assertSelectedUser(message, guildRow);
   const limit = Number(tokens[0]) || 10;
-  const rows = await getLeaderboard(pool, guildRow.id, limit);
+  const rows = await getLeaderboard(pool, guildRow, limit);
   if (!rows.length) return message.reply('No XP data yet.');
   const description = rows
     .map((row, idx) => `${idx + 1}. <@${row.discord_user_id}> — Level ${row.level} (${row.xp} XP)`)
@@ -548,7 +625,7 @@ async function handleMemory(message, context, guildRow, tokens, rawText) {
 }
 
 async function handleSettingsShow(message, context, guildRow) {
-  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
+  await assertSelectedUser(message, guildRow);
   const settings = [
     `Primary language: ${guildRow.primary_language}`,
     `Secondary language: ${guildRow.secondary_language || 'none'} (enabled: ${guildRow.secondary_language_enabled ? 'yes' : 'no'})`,
@@ -563,7 +640,9 @@ async function handleSettingsShow(message, context, guildRow) {
 
 async function handleResponseTrigger(message, context, guildRow, content) {
   const { pool, client } = context;
-  const userProfile = await getUserProfile(pool, message.author.id);
+  const userProfile = await getUserProfile(pool, message.author.id, {
+    discordName: getDiscordNameFallback(message, message.author.id)
+  });
   const memories = guildRow.memory_enabled
     ? await getRecentMemories(pool, guildRow.id, userProfile.id)
     : [];
@@ -578,8 +657,11 @@ async function handleResponseTrigger(message, context, guildRow, content) {
     xpProgress,
     message: content
   });
-  const response = await generateResponse(prompt);
+  const response = await generateResponse(prompt, pool);
   await message.reply(response);
+  if (guildRow.memory_enabled) {
+    await addMemory(pool, guildRow.id, userProfile.id, content);
+  }
   await awardInteractionXp(pool, guildRow, userProfile);
   logDebug('Responded to selected user via prefix trigger', {
     guild: message.guild.id,
@@ -601,14 +683,20 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const command = tokens.shift();
   const rawAfterCommand = withoutPrefix.slice(command.length).trim();
   const isAdminUser = isAdmin(message);
+  const allowAdminOverride = new Set(['assign', 'birthday-channel', 'xpchannel', 'xprole', 'rules', 'language', 'xp']).has(
+    command
+  );
 
-  if (
-    command !== 'help' &&
-    !isAdminUser &&
-    guildRow.selected_discord_user_id &&
-    message.author.id !== guildRow.selected_discord_user_id
-  ) {
-    return true;
+  try {
+    enforcePrefixAccess(message, guildRow, command, { allowAdminOverride });
+  } catch (err) {
+    if (err instanceof PermissionError) {
+      if (!err.silent) {
+        await message.reply('Missing permissions or incorrect user.');
+      }
+      return true;
+    }
+    throw err;
   }
 
   try {
@@ -648,6 +736,12 @@ export async function handlePrefixCommand(message, context, guildRow) {
         return true;
     }
   } catch (err) {
+    if (err instanceof PermissionError) {
+      if (!err.silent) {
+        await message.reply('Missing permissions or incorrect user.');
+      }
+      return true;
+    }
     logError('Prefix command failed', err);
     await message.reply(`Command failed: ${err.message}`);
     return true;

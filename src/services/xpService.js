@@ -3,6 +3,30 @@ import { logDebug } from '../utils/logger.js';
 
 const XP_COOLDOWN_MS = 5000;
 
+function applyThresholdGrowth(thresholds, growthRate = 0.05) {
+  if (!thresholds?.length) return [];
+
+  const sorted = [...thresholds].sort((a, b) => a.level - b.level);
+  if (sorted.length === 1) return sorted;
+
+  const scaled = [sorted[0]];
+  let gap = Math.max(sorted[1].threshold - sorted[0].threshold, 1);
+  scaled.push({ level: sorted[1].level, threshold: sorted[0].threshold + gap });
+
+  for (let i = 2; i < sorted.length; i += 1) {
+    gap = Math.max(Math.round(gap * (1 + growthRate)), 1);
+    const nextThreshold = scaled[i - 1].threshold + gap;
+    scaled.push({ level: sorted[i].level, threshold: nextThreshold });
+  }
+
+  return scaled;
+}
+
+async function getScaledThresholds(pool, guildId) {
+  const thresholds = await getLevelThresholds(pool, guildId);
+  return applyThresholdGrowth(thresholds);
+}
+
 export async function ensureUserGuildStats(pool, userId, guildId) {
   const [rows] = await pool.query(
     'SELECT * FROM user_guild_stats WHERE user_id = ? AND guild_id = ?',
@@ -33,7 +57,7 @@ function getNextLevelEntry(currentLevel, thresholds) {
 }
 
 export async function getUserProgress(pool, guildId, userId) {
-  const thresholds = await getLevelThresholds(pool, guildId);
+  const thresholds = await getScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userId, guildId);
   const currentLevelThreshold = thresholds.find((entry) => entry.level === stats.level)?.threshold || 0;
   const nextEntry = getNextLevelEntry(stats.level, thresholds);
@@ -60,7 +84,7 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
   }
 
   const guildId = guildRow.id;
-  const thresholds = await getLevelThresholds(pool, guildId);
+  const thresholds = await getScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userProfile.id, guildId);
   const amount = guildRow.xp_per_interaction || 0;
 
@@ -110,15 +134,19 @@ export async function resetUserStats(pool, guildId, userId) {
   return { ...stats, xp: 0, level: 1 };
 }
 
-export async function getLeaderboard(pool, guildId, limit = 10) {
+export async function getLeaderboard(pool, guild, limit = 10) {
+  const { discord_guild_id: discordGuildId, id: guildId } = guild;
   const [rows] = await pool.query(
-    `SELECT u.discord_user_id, u.display_name, s.xp, s.level
+    `SELECT u.discord_user_id, u.display_name, SUM(s.xp) AS xp, MAX(s.level) AS level
      FROM user_guild_stats s
      JOIN users u ON u.id = s.user_id
-     WHERE s.guild_id = ?
-     ORDER BY s.xp DESC
+     JOIN guilds g ON g.id = s.guild_id
+     WHERE g.discord_guild_id = ?
+       AND g.discord_guild_id IS NOT NULL
+     GROUP BY u.id
+     ORDER BY xp DESC
      LIMIT ?`,
-    [guildId, limit]
+    [discordGuildId || guildId, limit]
   );
   return rows;
 }
