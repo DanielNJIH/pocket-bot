@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { env } from '../config/env.js';
 import { ensureGuildRecord, updateSelectedUser } from '../services/guildSettingsService.js';
 import { ensureUserRecord } from '../services/profileService.js';
@@ -16,7 +16,7 @@ const setSelectedUserCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'This command can only be used inside a server.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
@@ -29,7 +29,7 @@ const setSelectedUserCommand = {
 
     await interaction.reply({
       content: `Selected user updated to ${targetUser} for bot instance #${env.botInstance}.`,
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 };
@@ -42,7 +42,7 @@ const botStatusCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'This command can only be used inside a server.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
@@ -54,7 +54,7 @@ const botStatusCommand = {
 
     await interaction.reply({
       content: `Bot instance: #${env.botInstance}\nSelected user: ${selectedUserLabel}`,
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 };
@@ -91,11 +91,12 @@ export async function handleSlashCommand(interaction, context) {
   } catch (err) {
     logError('Failed to execute slash command', err);
     if (!interaction.replied) {
-      await interaction.reply({
-        content: 'Something went wrong while running that command.',
-        ephemeral: true
-      }).catch(() => {});
+      await interaction
+        .reply({
+          content: 'Something went wrong while running that command.',
+          flags: MessageFlags.Ephemeral
+        })
+        .catch(() => {});
     }
   }
 }
-
