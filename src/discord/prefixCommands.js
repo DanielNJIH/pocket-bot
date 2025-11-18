@@ -710,15 +710,6 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const adminCommands = new Set(['assign', 'birthday-channel', 'xpchannel', 'xprole', 'rules', 'language']);
   const adminCommand = adminCommands.has(command);
 
-  if (
-    guildRow.selected_discord_user_id &&
-    message.author.id !== guildRow.selected_discord_user_id &&
-    !isAdminUser
-  ) {
-    await message.reply('Missing permissions or incorrect user.');
-    return true;
-  }
-
   try {
     enforcePrefixAccess(message, guildRow, command, { adminCommand });
   } catch (err) {
