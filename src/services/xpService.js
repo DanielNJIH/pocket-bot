@@ -1,6 +1,8 @@
 import { getLevelRoles, getLevelThresholds } from './guildSettingsService.js';
 import { logDebug } from '../utils/logger.js';
 
+const XP_COOLDOWN_MS = 5000;
+
 export async function ensureUserGuildStats(pool, userId, guildId) {
   const [rows] = await pool.query(
     'SELECT * FROM user_guild_stats WHERE user_id = ? AND guild_id = ?',
@@ -26,6 +28,32 @@ function calculateLevel(xp, thresholds) {
   return level;
 }
 
+function getNextLevelEntry(currentLevel, thresholds) {
+  return thresholds.find((entry) => entry.level > currentLevel) || null;
+}
+
+export async function getUserProgress(pool, guildId, userId) {
+  const thresholds = await getLevelThresholds(pool, guildId);
+  const stats = await ensureUserGuildStats(pool, userId, guildId);
+  const currentLevelThreshold = thresholds.find((entry) => entry.level === stats.level)?.threshold || 0;
+  const nextEntry = getNextLevelEntry(stats.level, thresholds);
+  const nextLevel = nextEntry?.level || null;
+  const nextThreshold = nextEntry?.threshold || currentLevelThreshold;
+  const xpToNext = nextEntry ? Math.max(nextThreshold - stats.xp, 0) : 0;
+  const span = Math.max(nextThreshold - currentLevelThreshold, 1);
+  const progress = nextEntry ? Math.min((stats.xp - currentLevelThreshold) / span, 1) : 1;
+
+  return {
+    ...stats,
+    thresholds,
+    nextLevel,
+    nextThreshold,
+    xpToNext,
+    currentLevelThreshold,
+    progress
+  };
+}
+
 export async function awardInteractionXp(pool, guildRow, userProfile) {
   if (!guildRow.xp_enabled) {
     return { awarded: 0, leveledUp: false };
@@ -38,6 +66,11 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
 
   if (!amount) {
     return { awarded: 0, leveledUp: false };
+  }
+
+  const lastAward = stats.last_xp_at ? new Date(stats.last_xp_at).getTime() : 0;
+  if (lastAward && Date.now() - lastAward < XP_COOLDOWN_MS) {
+    return { awarded: 0, leveledUp: false, rateLimited: true };
   }
 
   const newXp = stats.xp + amount;
@@ -63,6 +96,12 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
 
 export async function getUserStats(pool, guildId, userId) {
   return ensureUserGuildStats(pool, userId, guildId);
+}
+
+export async function getNextRoleReward(pool, guildId, currentLevel) {
+  const roles = await getLevelRoles(pool, guildId);
+  const sorted = [...roles].sort((a, b) => a.level - b.level);
+  return sorted.find((entry) => entry.level > currentLevel) || null;
 }
 
 export async function resetUserStats(pool, guildId, userId) {

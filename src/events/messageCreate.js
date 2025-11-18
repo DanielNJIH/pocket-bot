@@ -5,7 +5,7 @@ import { getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
 import { generateResponse } from '../services/ai/geminiClient.js';
-import { awardInteractionXp } from '../services/xpService.js';
+import { awardInteractionXp, getUserProgress } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { handlePrefixCommand } from '../discord/prefixCommands.js';
@@ -51,6 +51,21 @@ export async function execute(message, context) {
 
   const userProfile = await getUserProfile(pool, message.author.id);
 
+  // Award XP for every message from the selected user (respecting cooldown and guild settings).
+  const xpResult = await awardInteractionXp(pool, guildRow, userProfile);
+  if (xpResult.leveledUp && guildRow.xp_announcement_channel_id) {
+    const channel = message.guild.channels.cache.get(guildRow.xp_announcement_channel_id);
+    if (channel?.isTextBased()) {
+      const roleText = xpResult.unlockedRole ? `<@&${xpResult.unlockedRole}>` : 'new milestone';
+      channel.send(`🎉 ${message.author} reached level ${xpResult.newLevel}! ${roleText}!`);
+    }
+  }
+
+  if (xpResult.unlockedRole) {
+    const member = await message.guild.members.fetch(message.author.id);
+    await member.roles.add(xpResult.unlockedRole).catch((err) => logError('Failed to assign role on level up', err));
+  }
+
   const mentioned = message.mentions.has(client.user);
   const codewordHit = hasCodewordHit(message.content, userProfile.codewords);
   const referencedMessage = mentioned || message.reference ? await fetchReferencedMessage(message) : null;
@@ -72,33 +87,19 @@ export async function execute(message, context) {
       : [];
     const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow.id) : [];
     await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
+    const xpProgress = await getUserProgress(pool, guildRow.id, userProfile.id);
     const prompt = buildPrompt({
       guildSettings: guildRow,
       userProfile,
       memories,
       rules,
+      xpProgress,
       message: message.cleanContent,
       replyContext
     });
 
     const response = await generateResponse(prompt);
     await message.reply(response);
-
-    const xpResult = await awardInteractionXp(pool, guildRow, userProfile);
-    if (xpResult.leveledUp && guildRow.xp_announcement_channel_id) {
-      const channel = message.guild.channels.cache.get(guildRow.xp_announcement_channel_id);
-      if (channel?.isTextBased()) {
-        const roleText = xpResult.unlockedRole ? `<@&${xpResult.unlockedRole}>` : 'new milestone';
-        channel.send(`🎉 ${message.author} reached level ${xpResult.newLevel}! ${roleText}!`);
-      }
-    }
-
-    if (xpResult.unlockedRole) {
-      const member = await message.guild.members.fetch(message.author.id);
-      await member.roles.add(xpResult.unlockedRole).catch((err) =>
-        logError('Failed to assign role on level up', err)
-      );
-    }
 
     logDebug('Responded to selected user', {
       guild: message.guild.id,

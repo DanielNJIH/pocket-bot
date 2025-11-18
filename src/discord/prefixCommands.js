@@ -1,5 +1,5 @@
 import { env } from '../config/env.js';
-import { PermissionsBitField } from 'discord.js';
+import { EmbedBuilder, PermissionsBitField } from 'discord.js';
 import {
   updateSelectedUser,
   setBirthdayChannel,
@@ -36,8 +36,9 @@ import {
 import { getRulesForGuild as fetchRulesForPrompt } from '../services/rulesService.js';
 import {
   awardInteractionXp,
+  getNextRoleReward,
   getLeaderboard,
-  getUserStats,
+  getUserProgress,
   resetUserStats
 } from '../services/xpService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
@@ -53,8 +54,6 @@ const USER_HELP_LINES = [
   '- `!sys profile set-name <text>` / `set-about <text>` / `set-preferences <text>` / `set-birthday <YYYY-MM-DD>` — update your profile.',
   '- `!sys profile show [@user|name]` — display a stored profile.',
   '- `!sys birthday when [@user|name]` — show a saved birthday.',
-  '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules (selected user only).',
-  '- `!sys rules remove <name>` / `list [type]` / `show <name>` — manage rules.',
   '- `!sys xp` — see your XP and level.',
   '- `!sys leaderboard [limit]` — show top XP earners (if you are the selected user).',
   '- `!sys memory <add|list|clear> ...` — manage your memories.',
@@ -68,6 +67,8 @@ const ADMIN_HELP_LINES = [
   '- `!sys xp set-amount <number>` / `toggle <true|false>` / `reset @user` — administer XP.',
   '- `!sys xprole list` — list level → role rewards.',
   '- `!sys xprole <add|remove> <level> @role` — manage level rewards.',
+  '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules (admin only).',
+  '- `!sys rules remove <name>` / `list [type]` / `show <name>` — manage rules (admin only).',
   '- `!sys language set primary:<code> secondary:<code?> secondary_enabled:<true|false?>` — configure guild languages.'
 ];
 
@@ -86,6 +87,12 @@ function parseKeyValueArgs(text) {
     result[key] = value;
   }
   return result;
+}
+
+function buildProgressBar(progress) {
+  const blocks = 12;
+  const filled = Math.round(Math.min(Math.max(progress, 0), 1) * blocks);
+  return `${'▰'.repeat(filled)}${'▱'.repeat(Math.max(blocks - filled, 0))}`;
 }
 
 function formatRule(rule) {
@@ -290,7 +297,7 @@ async function handleBirthdayWhen(message, context, guildRow, tokens) {
 
 async function handleRules(message, context, guildRow, tokens, rawText) {
   const { pool } = context;
-  assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
+  assertAdmin(message);
   const action = tokens[0];
   const remainder = rawText.slice(action?.length || 0).trim();
 
@@ -364,8 +371,36 @@ async function handleXp(message, context, guildRow, tokens) {
     if (!isAdminUser && targetUser.discord_user_id !== message.author.id) {
       return message.reply('You can only view your own XP.');
     }
-    const stats = await getUserStats(pool, guildRow.id, targetUser.id);
-    return message.reply(`XP for <@${targetUser.discord_user_id}> — Level ${stats.level}, XP ${stats.xp}`);
+    const progress = await getUserProgress(pool, guildRow.id, targetUser.id);
+    const nextRole = await getNextRoleReward(pool, guildRow.id, progress.level);
+    const discordUser = await message.client.users.fetch(targetUser.discord_user_id);
+    const progressBar = buildProgressBar(progress.progress);
+    const nextLevelText = progress.nextLevel
+      ? `Level ${progress.nextLevel} (${progress.xpToNext} XP left)`
+      : 'Max level reached';
+    const nextRankText = progress.nextLevel
+      ? `${nextLevelText}${nextRole ? ` → <@&${nextRole.role_id}>` : ''}`
+      : nextRole
+        ? `Upcoming role: <@&${nextRole.role_id}> at level ${nextRole.level}`
+        : 'Highest rank reached';
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setAuthor({
+        name: `${discordUser.username || discordUser.tag || 'User'} — XP Overview`,
+        iconURL: discordUser.displayAvatarURL()
+      })
+      .setThumbnail(discordUser.displayAvatarURL())
+      .addFields(
+        { name: 'Level', value: `${progress.level}`, inline: true },
+        { name: 'Total XP', value: `${progress.xp}`, inline: true },
+        { name: 'Next level', value: nextLevelText, inline: true },
+        { name: 'Progress', value: `${progressBar} (${Math.round(progress.progress * 100)}%)`, inline: false },
+        { name: 'Next rank', value: nextRankText, inline: false }
+      )
+      .setFooter({ text: `XP per message: ${guildRow.xp_per_interaction} | Cooldown: 5s` });
+    await message.reply({ embeds: [embed] });
+    return true;
   }
 
   if (sub === 'set-amount') {
@@ -401,10 +436,15 @@ async function handleLeaderboard(message, context, guildRow, tokens) {
   const limit = Number(tokens[0]) || 10;
   const rows = await getLeaderboard(pool, guildRow.id, limit);
   if (!rows.length) return message.reply('No XP data yet.');
-  const lines = rows.map(
-    (row, idx) => `${idx + 1}. <@${row.discord_user_id}> — Level ${row.level}, XP ${row.xp}`
-  );
-  await message.reply(lines.join('\n'));
+  const description = rows
+    .map((row, idx) => `${idx + 1}. <@${row.discord_user_id}> — Level ${row.level} (${row.xp} XP)`)
+    .join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle('XP Leaderboard')
+    .setDescription(description)
+    .setFooter({ text: `Top ${rows.length} · XP per message: ${guildRow.xp_per_interaction}` });
+  await message.reply({ embeds: [embed] });
   return true;
 }
 
@@ -528,12 +568,14 @@ async function handleResponseTrigger(message, context, guildRow, content) {
     ? await getRecentMemories(pool, guildRow.id, userProfile.id)
     : [];
   const rules = guildRow.rules_enabled ? await fetchRulesForPrompt(pool, guildRow.id) : [];
+  const xpProgress = await getUserProgress(pool, guildRow.id, userProfile.id);
   await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
   const prompt = buildPrompt({
     guildSettings: guildRow,
     userProfile,
     memories,
     rules,
+    xpProgress,
     message: content
   });
   const response = await generateResponse(prompt);
