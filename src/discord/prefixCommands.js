@@ -148,11 +148,9 @@ function assertAdmin(message) {
   if (!isAdmin(message)) {
     throw new PermissionError('Missing permissions or incorrect user.');
   }
-
-  return true;
 }
 
-function enforcePrefixAccess(message, guildRow, command, { allowAdminOverride = false } = {}) {
+function enforcePrefixAccess(message, guildRow, command, { adminCommand = false } = {}) {
   const hasSelection = Boolean(guildRow.selected_discord_user_id);
   const isSelectedUser = message.author.id === guildRow.selected_discord_user_id;
   const isAdminUser = isAdmin(message);
@@ -163,12 +161,12 @@ function enforcePrefixAccess(message, guildRow, command, { allowAdminOverride = 
     throw new PermissionError('Missing permissions or incorrect user.');
   }
 
-  if (allowAdminOverride && isAdminUser) {
-    return true;
-  }
-
   if (!isSelectedUser) {
     throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
+  }
+
+  if (adminCommand && !isAdminUser) {
+    throw new PermissionError('Missing permissions or incorrect user.');
   }
 
   return true;
@@ -685,12 +683,11 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const command = tokens.shift();
   const rawAfterCommand = withoutPrefix.slice(command.length).trim();
   const isAdminUser = isAdmin(message);
-  const allowAdminOverride = new Set(['assign', 'birthday-channel', 'xpchannel', 'xprole', 'rules', 'language', 'xp']).has(
-    command
-  );
+  const adminCommands = new Set(['assign', 'birthday-channel', 'xpchannel', 'xprole', 'rules', 'language']);
+  const adminCommand = adminCommands.has(command);
 
   try {
-    enforcePrefixAccess(message, guildRow, command, { allowAdminOverride });
+    enforcePrefixAccess(message, guildRow, command, { adminCommand });
   } catch (err) {
     if (err instanceof PermissionError) {
       if (!err.silent) {

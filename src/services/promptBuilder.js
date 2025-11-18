@@ -18,6 +18,8 @@ export function buildPrompt({
 
   const userDisplayName = userProfile.display_name || userProfile.discord_name || 'Unknown';
 
+  const botName = env.botName;
+
   const ageYears = userProfile.birthday
     ? Math.max(
         0,
@@ -72,7 +74,8 @@ export function buildPrompt({
     : '';
 
   return [
-    `System: You are ${env.botName}, a personal pocket friend. Personality: ${env.botPersonality}.`,
+    `System: You are ${botName}, a personal pocket friend. Personality: ${env.botPersonality}.`,
+    `Your codename and name is ${botName}; always refer to yourself that way.`,
     'Always respect these guardrails:',
     '- Only engage with the selected user in this guild.',
     '- If information is missing from the database, say you do not know rather than inventing details.',

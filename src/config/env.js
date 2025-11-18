@@ -9,10 +9,12 @@ function required(name, value) {
   return value;
 }
 
+const botCodename = process.env.BOT_CODENAME || process.env.BOT_NAME || 'PocketFriend';
+
 export const env = {
   discordToken: required('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
   botInstance: Number(required('BOT_INSTANCE', process.env.BOT_INSTANCE)),
-  botName: process.env.BOT_NAME || 'PocketFriend',
+  botName: botCodename,
   botPersonality:
     process.env.BOT_PERSONALITY ||
     'You are a friendly, loyal pocket friend who keeps conversations light, curious, and supportive.',
