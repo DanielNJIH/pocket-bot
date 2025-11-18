@@ -138,15 +138,18 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
   );
 
   let unlockedRole = null;
+  let unlockedRoleLevel = null;
   if (leveledUp) {
     const roles = await getLevelRoles(pool, guildId);
     const role = roles
+      .filter((entry) => entry.level > stats.level && entry.level <= newLevel)
       .sort((a, b) => b.level - a.level)
-      .find((entry) => newLevel >= entry.level);
+      .shift();
     unlockedRole = role?.role_id || null;
+    unlockedRoleLevel = role?.level || null;
   }
 
-  return { awarded: amount, leveledUp, newLevel, newXp, unlockedRole };
+  return { awarded: amount, leveledUp, newLevel, newXp, unlockedRole, unlockedRoleLevel };
 }
 
 export async function getUserStats(pool, guildId, userId) {
@@ -163,6 +166,21 @@ export async function resetUserStats(pool, guildId, userId) {
   const stats = await ensureUserGuildStats(pool, userId, guildId);
   await pool.query('UPDATE user_guild_stats SET xp = 0, level = 1 WHERE id = ?', [stats.id]);
   return { ...stats, xp: 0, level: 1 };
+}
+
+export async function setUserXp(pool, guildId, userId, xp) {
+  const thresholds = await loadThresholdsWithScaling(pool, guildId);
+  const stats = await ensureUserGuildStats(pool, userId, guildId);
+  const normalizedXp = Math.max(Number.isFinite(Number(xp)) ? Number(xp) : 0, 0);
+  const newLevel = calculateLevel(normalizedXp, thresholds);
+
+  await pool.query('UPDATE user_guild_stats SET xp = ?, level = ?, last_xp_at = CURRENT_TIMESTAMP WHERE id = ?', [
+    normalizedXp,
+    newLevel,
+    stats.id
+  ]);
+
+  return { ...stats, xp: normalizedXp, level: newLevel };
 }
 
 export async function getLeaderboard(pool, guild, limit = 10) {

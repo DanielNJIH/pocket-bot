@@ -75,7 +75,7 @@ export async function getUserByDiscordId(pool, discordUserId) {
 
 export async function getGuildUserProfiles(pool, discordGuildId) {
   const [rows] = await pool.query(
-    `SELECT DISTINCT u.*
+    `SELECT DISTINCT u.*, s.xp, s.level
      FROM users u
      JOIN user_guild_stats s ON s.user_id = u.id
      JOIN guilds g ON g.id = s.guild_id

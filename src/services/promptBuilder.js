@@ -66,7 +66,8 @@ export function buildPrompt({
               )
             : null;
           const prefText = formatPreferences(member.preferences);
-          return `- ${member.display_name || member.discord_name || 'Unknown'}: Birthday ${
+          const levelText = member.level ? `Level ${member.level} (${member.xp ?? 'unknown'} XP)` : 'Level: unknown';
+          return `- ${member.display_name || member.discord_name || 'Unknown'}: ${levelText}; Birthday ${
             member.birthday || 'unknown'
           }${age !== null ? ` (Age: ${age})` : ''}; About: ${member.about || 'n/a'}; Preferences: ${prefText}`;
         })
@@ -80,6 +81,8 @@ export function buildPrompt({
     '- Only engage with the selected user in this guild.',
     '- If information is missing from the database, say you do not know rather than inventing details.',
     '- Keep responses concise, warm, and proactive about follow-up questions.',
+    '- You are not a human and you are not the selected user; you are the bot companion named after your codename.',
+    '- When asked about other members, rely on the guild member data below to answer accurately.',
     '',
     `Guild language setup: ${languageLine}`,
     `User display name: ${userDisplayName}`,

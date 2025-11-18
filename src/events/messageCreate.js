@@ -1,6 +1,6 @@
 import { Events } from 'discord.js';
 import { ensureGuildRecord } from '../services/guildSettingsService.js';
-import { getGuildUserProfiles, getUserProfile } from '../services/profileService.js';
+import { getUserProfile } from '../services/profileService.js';
 import { addMemory, getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
@@ -9,6 +9,7 @@ import { awardInteractionXp, getUserProgress } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { handlePrefixCommand } from '../discord/prefixCommands.js';
+import { applyNameFallback, buildGuildDirectory } from '../utils/memberDirectory.js';
 
 export const name = Events.MessageCreate;
 
@@ -25,44 +26,6 @@ async function fetchReferencedMessage(message) {
 function hasCodewordHit(content, codewords) {
   const lower = content.toLowerCase();
   return codewords?.some((word) => lower.includes(word.toLowerCase()));
-}
-
-async function buildMemberNameMap(guild, userIds) {
-  if (!userIds?.length) return new Map();
-  const unique = [...new Set(userIds)];
-  try {
-    const fetched = await guild.members.fetch({ user: unique });
-    return new Map(
-      unique
-        .map((id) => {
-          const member = fetched.get(id) || guild.members.cache.get(id);
-          const user = member?.user;
-          const name =
-            member?.displayName || user?.globalName || user?.username || user?.tag || null;
-          return name ? [id, name] : null;
-        })
-        .filter(Boolean)
-    );
-  } catch (err) {
-    logDebug('Could not fetch member names for directory', { error: err?.message });
-    return new Map(
-      unique
-        .map((id) => {
-          const member = guild.members.cache.get(id);
-          const user = member?.user;
-          const name =
-            member?.displayName || user?.globalName || user?.username || user?.tag || null;
-          return name ? [id, name] : null;
-        })
-        .filter(Boolean)
-    );
-  }
-}
-
-function applyNameFallback(profile, nameMap, fallbackName) {
-  const discordName = nameMap.get(profile.discord_user_id) || profile.discord_name || fallbackName;
-  const displayName = profile.display_name || discordName || fallbackName;
-  return { ...profile, discord_name: discordName, display_name: displayName };
 }
 
 export async function execute(message, context) {
@@ -87,11 +50,9 @@ export async function execute(message, context) {
     return;
   }
 
-  const guildProfiles = await getGuildUserProfiles(pool, message.guild.id);
-  const nameMap = await buildMemberNameMap(
-    message.guild,
-    guildProfiles.map((profile) => profile.discord_user_id)
-  );
+  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(pool, message.guild, {
+    excludeUserId: message.author.id
+  });
 
   const discordName =
     nameMap.get(message.author.id) ||
@@ -104,17 +65,16 @@ export async function execute(message, context) {
     nameMap,
     discordName
   );
-  const guildDirectory = guildProfiles
-    .map((profile) => applyNameFallback(profile, nameMap, profile.discord_user_id))
-    .filter((profile) => profile.discord_user_id !== message.author.id);
 
   // Award XP for every message from the selected user (respecting cooldown and guild settings).
   const xpResult = await awardInteractionXp(pool, guildRow, userProfile);
   if (xpResult.leveledUp && guildRow.xp_announcement_channel_id) {
     const channel = message.guild.channels.cache.get(guildRow.xp_announcement_channel_id);
     if (channel?.isTextBased()) {
-      const roleText = xpResult.unlockedRole ? `<@&${xpResult.unlockedRole}>` : 'new milestone';
-      channel.send(`🎉 ${message.author} reached level ${xpResult.newLevel}! ${roleText}!`);
+      const roleText = xpResult.unlockedRole
+        ? `and unlocked <@&${xpResult.unlockedRole}>`
+        : 'Keep it up!';
+      channel.send(`🎉 ${message.author} reached level ${xpResult.newLevel}! ${roleText}`);
     }
   }
 
