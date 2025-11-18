@@ -65,11 +65,11 @@ export async function registerSlashCommands(client) {
   const commandData = commands.map((command) => command.data.toJSON());
   const guilds = await client.guilds.fetch();
 
-  for (const [, guild] of guilds) {
+  for (const [guildId] of guilds) {
     try {
-      await guild.commands.set(commandData);
+      await client.application.commands.set(commandData, guildId);
     } catch (err) {
-      logError('Failed to register commands for guild', { guildId: guild.id, error: err });
+      logError('Failed to register commands for guild', { guildId, error: err });
     }
   }
 
