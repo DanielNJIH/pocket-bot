@@ -48,6 +48,14 @@ import { logDebug, logError } from '../utils/logger.js';
 
 const PREFIX = '!sys';
 
+class PermissionError extends Error {
+  constructor(message, { silent = false } = {}) {
+    super(message);
+    this.name = 'PermissionError';
+    this.silent = silent;
+  }
+}
+
 const USER_HELP_LINES = [
   '- `!sys help` — show this help.',
   '- `!sys codeword <add|remove|list> <word>` — manage your trigger codewords.',
@@ -105,8 +113,30 @@ function isAdmin(message) {
 
 function assertAdmin(message) {
   if (!isAdmin(message)) {
-    throw new Error('Only server admins can run this command.');
+    throw new PermissionError('Missing permissions or incorrect user.');
   }
+}
+
+function enforcePrefixAccess(message, guildRow, command) {
+  const hasSelection = Boolean(guildRow.selected_discord_user_id);
+  const isSelectedUser = message.author.id === guildRow.selected_discord_user_id;
+  const isAdminUser = isAdmin(message);
+
+  if (hasSelection && !isSelectedUser) {
+    throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
+  }
+
+  if (!hasSelection) {
+    if (command === 'assign' && isAdminUser) return true;
+    if (command === 'help') return true;
+    throw new PermissionError('Missing permissions or incorrect user.');
+  }
+
+  if (!isSelectedUser) {
+    throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
+  }
+
+  return true;
 }
 
 async function resolveUserFromArg(pool, arg) {
@@ -127,7 +157,7 @@ async function assertSelectedUser(message, guildRow) {
 
 function assertSelectedUserOrAdmin(message, guildRow, { allowAdmin } = { allowAdmin: true }) {
   if (!guildRow.selected_discord_user_id) {
-    throw new Error('No selected user configured for this guild. Use `!sys assign @user` first.');
+    throw new PermissionError('Missing permissions or incorrect user.');
   }
   if (message.author.id === guildRow.selected_discord_user_id) {
     return true;
@@ -135,7 +165,7 @@ function assertSelectedUserOrAdmin(message, guildRow, { allowAdmin } = { allowAd
   if (allowAdmin && isAdmin(message)) {
     return true;
   }
-  throw new Error('Only the selected user can run these commands.');
+  throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
 }
 
 async function handleHelp(message, isAdminUser) {
@@ -578,8 +608,11 @@ async function handleResponseTrigger(message, context, guildRow, content) {
     xpProgress,
     message: content
   });
-  const response = await generateResponse(prompt);
+  const response = await generateResponse(prompt, pool);
   await message.reply(response);
+  if (guildRow.memory_enabled) {
+    await addMemory(pool, guildRow.id, userProfile.id, content);
+  }
   await awardInteractionXp(pool, guildRow, userProfile);
   logDebug('Responded to selected user via prefix trigger', {
     guild: message.guild.id,
@@ -602,13 +635,16 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const rawAfterCommand = withoutPrefix.slice(command.length).trim();
   const isAdminUser = isAdmin(message);
 
-  if (
-    command !== 'help' &&
-    !isAdminUser &&
-    guildRow.selected_discord_user_id &&
-    message.author.id !== guildRow.selected_discord_user_id
-  ) {
-    return true;
+  try {
+    enforcePrefixAccess(message, guildRow, command);
+  } catch (err) {
+    if (err instanceof PermissionError) {
+      if (!err.silent) {
+        await message.reply('Missing permissions or incorrect user.');
+      }
+      return true;
+    }
+    throw err;
   }
 
   try {
@@ -648,6 +684,12 @@ export async function handlePrefixCommand(message, context, guildRow) {
         return true;
     }
   } catch (err) {
+    if (err instanceof PermissionError) {
+      if (!err.silent) {
+        await message.reply('Missing permissions or incorrect user.');
+      }
+      return true;
+    }
     logError('Prefix command failed', err);
     await message.reply(`Command failed: ${err.message}`);
     return true;
