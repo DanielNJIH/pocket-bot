@@ -2,6 +2,7 @@ import { logInfo } from '../utils/logger.js';
 
 export async function applyMigrations(pool) {
   await ensureGuildBotInstanceSupport(pool);
+  await ensureGeminiApiKeyTable(pool);
 }
 
 async function ensureGuildBotInstanceSupport(pool) {
@@ -33,4 +34,20 @@ async function ensureGuildBotInstanceSupport(pool) {
     await pool.query('ALTER TABLE guilds ADD UNIQUE KEY uq_discord_bot (discord_guild_id, bot_instance)');
     logInfo('Added composite unique index for discord_guild_id and bot_instance');
   }
+}
+
+async function ensureGeminiApiKeyTable(pool) {
+  const [table] = await pool.query("SHOW TABLES LIKE 'gemini_api_keys'");
+  if (table.length) return;
+
+  await pool.query(
+    `CREATE TABLE gemini_api_keys (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       api_key VARCHAR(255) NOT NULL,
+       active TINYINT(1) DEFAULT 1,
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+
+  logInfo('Created gemini_api_keys table');
 }

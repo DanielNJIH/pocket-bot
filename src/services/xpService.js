@@ -2,6 +2,61 @@ import { getLevelRoles, getLevelThresholds } from './guildSettingsService.js';
 import { logDebug } from '../utils/logger.js';
 
 const XP_COOLDOWN_MS = 5000;
+const MAX_LEVEL = 999;
+const LEVEL_BLOCK_SIZE = 5;
+const LEVEL_BLOCK_GROWTH = 0.2; // 20% every 5 levels
+
+function getBaseGap(thresholds) {
+  if (!thresholds?.length) return 100;
+
+  const sorted = [...thresholds]
+    .filter((entry) => typeof entry?.level === 'number' && typeof entry?.threshold === 'number')
+    .sort((a, b) => a.level - b.level);
+
+  let smallestGap = Infinity;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const gap = sorted[i].threshold - sorted[i - 1].threshold;
+    if (gap > 0 && gap < smallestGap) {
+      smallestGap = gap;
+    }
+  }
+
+  return Number.isFinite(smallestGap) ? smallestGap : 100;
+}
+
+function buildThresholds(thresholds) {
+  const sorted = [...thresholds]
+    .filter((entry) => typeof entry?.level === 'number' && typeof entry?.threshold === 'number')
+    .sort((a, b) => a.level - b.level);
+
+  const provided = new Map(sorted.map((entry) => [entry.level, entry.threshold]));
+  const baseThreshold = provided.get(1) ?? 0;
+  const baseGap = getBaseGap(sorted);
+
+  const scaled = [{ level: 1, threshold: baseThreshold }];
+  let runningThreshold = baseThreshold;
+
+  for (let level = 2; level <= MAX_LEVEL; level += 1) {
+    const providedThreshold = provided.get(level);
+    if (typeof providedThreshold === 'number') {
+      runningThreshold = providedThreshold;
+    } else {
+      const blockIndex = Math.floor((level - 2) / LEVEL_BLOCK_SIZE);
+      const gap = Math.max(Math.round(baseGap * (1 + LEVEL_BLOCK_GROWTH * blockIndex)), 1);
+      runningThreshold += gap;
+    }
+
+    scaled.push({ level, threshold: runningThreshold });
+  }
+
+  return scaled;
+}
+
+// Fetch configured level thresholds and expand them with the scaling rules.
+async function loadThresholdsWithScaling(pool, guildId) {
+  const thresholds = await getLevelThresholds(pool, guildId);
+  return buildThresholds(thresholds);
+}
 
 export async function ensureUserGuildStats(pool, userId, guildId) {
   const [rows] = await pool.query(
@@ -33,7 +88,7 @@ function getNextLevelEntry(currentLevel, thresholds) {
 }
 
 export async function getUserProgress(pool, guildId, userId) {
-  const thresholds = await getLevelThresholds(pool, guildId);
+  const thresholds = await loadThresholdsWithScaling(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userId, guildId);
   const currentLevelThreshold = thresholds.find((entry) => entry.level === stats.level)?.threshold || 0;
   const nextEntry = getNextLevelEntry(stats.level, thresholds);
@@ -60,7 +115,7 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
   }
 
   const guildId = guildRow.id;
-  const thresholds = await getLevelThresholds(pool, guildId);
+  const thresholds = await loadThresholdsWithScaling(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userProfile.id, guildId);
   const amount = guildRow.xp_per_interaction || 0;
 
@@ -110,15 +165,19 @@ export async function resetUserStats(pool, guildId, userId) {
   return { ...stats, xp: 0, level: 1 };
 }
 
-export async function getLeaderboard(pool, guildId, limit = 10) {
+export async function getLeaderboard(pool, guild, limit = 10) {
+  const { discord_guild_id: discordGuildId, id: guildId } = guild;
   const [rows] = await pool.query(
-    `SELECT u.discord_user_id, u.display_name, s.xp, s.level
+    `SELECT u.discord_user_id, u.display_name, SUM(s.xp) AS xp, MAX(s.level) AS level
      FROM user_guild_stats s
      JOIN users u ON u.id = s.user_id
-     WHERE s.guild_id = ?
-     ORDER BY s.xp DESC
+     JOIN guilds g ON g.id = s.guild_id
+     WHERE g.discord_guild_id = ?
+       AND g.discord_guild_id IS NOT NULL
+     GROUP BY u.id
+     ORDER BY xp DESC
      LIMIT ?`,
-    [guildId, limit]
+    [discordGuildId || guildId, limit]
   );
   return rows;
 }

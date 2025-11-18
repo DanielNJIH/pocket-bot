@@ -1,8 +1,22 @@
-import { MessageFlags, SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, PermissionsBitField, SlashCommandBuilder } from 'discord.js';
 import { env } from '../config/env.js';
 import { ensureGuildRecord, updateSelectedUser } from '../services/guildSettingsService.js';
 import { ensureUserRecord } from '../services/profileService.js';
 import { logError, logInfo } from '../utils/logger.js';
+
+function isInteractionAdmin(interaction) {
+  return interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild);
+}
+
+async function requireAdmin(interaction) {
+  if (isInteractionAdmin(interaction)) return true;
+
+  await interaction.reply({
+    content: 'Missing permissions or incorrect user.',
+    flags: MessageFlags.Ephemeral
+  });
+  return false;
+}
 
 const setSelectedUserCommand = {
   data: new SlashCommandBuilder()
@@ -19,6 +33,8 @@ const setSelectedUserCommand = {
       });
       return;
     }
+
+    if (!(await requireAdmin(interaction))) return;
 
     const { pool } = context;
     const targetUser = interaction.options.getUser('user', true);
@@ -45,6 +61,8 @@ const botStatusCommand = {
       });
       return;
     }
+
+    if (!(await requireAdmin(interaction))) return;
 
     const { pool } = context;
     const guildRow = await ensureGuildRecord(pool, interaction.guildId);
