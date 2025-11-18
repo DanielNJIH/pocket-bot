@@ -3,12 +3,16 @@ import { env } from '../config/env.js';
 import { logDebug } from '../utils/logger.js';
 
 export async function ensureGuildRecord(pool, discordGuildId) {
+  // Guild settings are shared across all bot instances for a Discord guild. Always re-use the
+  // first guild row we can find for this Discord guild instead of creating per-instance copies.
   const [existing] = await pool.query(
     `SELECT g.*, u.discord_user_id AS selected_discord_user_id
      FROM guilds g
      LEFT JOIN users u ON g.selected_user_id = u.id
-     WHERE g.discord_guild_id = ? AND g.bot_instance = ?`,
-    [discordGuildId, env.botInstance]
+     WHERE g.discord_guild_id = ?
+     ORDER BY g.id ASC
+     LIMIT 1`,
+    [discordGuildId]
   );
 
   if (existing.length) {
