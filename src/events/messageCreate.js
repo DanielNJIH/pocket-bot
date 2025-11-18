@@ -8,6 +8,7 @@ import { generateResponse } from '../services/ai/geminiClient.js';
 import { awardInteractionXp } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
+import { handlePrefixCommand } from '../discord/prefixCommands.js';
 
 export const name = Events.MessageCreate;
 
@@ -35,6 +36,11 @@ export async function execute(message, context) {
 
   const guildRow = await ensureGuildRecord(pool, message.guild.id);
   const selectedUserId = guildRow.selected_discord_user_id;
+
+  const handled = await handlePrefixCommand(message, context, guildRow);
+  if (handled) {
+    return;
+  }
 
   if (!selectedUserId) {
     return;

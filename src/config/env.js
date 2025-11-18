@@ -17,6 +17,7 @@ export const env = {
     process.env.BOT_PERSONALITY ||
     'You are a friendly, loyal pocket friend who keeps conversations light, curious, and supportive.',
   geminiApiKey: required('GEMINI_API_KEY', process.env.GEMINI_API_KEY),
+  // default to the stable, supported model alias
   geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash-latest',
   mysql: {
     host: required('MYSQL_HOST', process.env.MYSQL_HOST),
