@@ -27,6 +27,32 @@ export async function updateSelectedUser(pool, guildId, userId) {
   await pool.query('UPDATE guilds SET selected_user_id = ? WHERE id = ?', [userId, guildId]);
 }
 
+export async function setBirthdayChannel(pool, guildId, channelId) {
+  await pool.query('UPDATE guilds SET birthday_channel_id = ? WHERE id = ?', [channelId, guildId]);
+}
+
+export async function setXpAnnouncementChannel(pool, guildId, channelId) {
+  await pool.query('UPDATE guilds SET xp_announcement_channel_id = ? WHERE id = ?', [
+    channelId,
+    guildId
+  ]);
+}
+
+export async function setXpPerInteraction(pool, guildId, amount) {
+  await pool.query('UPDATE guilds SET xp_per_interaction = ? WHERE id = ?', [amount, guildId]);
+}
+
+export async function toggleXp(pool, guildId, enabled) {
+  await pool.query('UPDATE guilds SET xp_enabled = ? WHERE id = ?', [enabled ? 1 : 0, guildId]);
+}
+
+export async function updateLanguages(pool, guildId, { primary, secondary, secondaryEnabled }) {
+  await pool.query(
+    'UPDATE guilds SET primary_language = ?, secondary_language = ?, secondary_language_enabled = ? WHERE id = ?',
+    [primary, secondary || null, secondaryEnabled ? 1 : 0, guildId]
+  );
+}
+
 export async function getLevelThresholds(pool, guildId) {
   const [rows] = await pool.query(
     'SELECT level, threshold FROM xp_levels WHERE guild_id = ? ORDER BY level ASC',

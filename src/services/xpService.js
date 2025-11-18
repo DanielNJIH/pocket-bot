@@ -60,3 +60,26 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
 
   return { awarded: amount, leveledUp, newLevel, newXp, unlockedRole };
 }
+
+export async function getUserStats(pool, guildId, userId) {
+  return ensureUserGuildStats(pool, userId, guildId);
+}
+
+export async function resetUserStats(pool, guildId, userId) {
+  const stats = await ensureUserGuildStats(pool, userId, guildId);
+  await pool.query('UPDATE user_guild_stats SET xp = 0, level = 1 WHERE id = ?', [stats.id]);
+  return { ...stats, xp: 0, level: 1 };
+}
+
+export async function getLeaderboard(pool, guildId, limit = 10) {
+  const [rows] = await pool.query(
+    `SELECT u.discord_user_id, u.display_name, s.xp, s.level
+     FROM user_guild_stats s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.guild_id = ?
+     ORDER BY s.xp DESC
+     LIMIT ?`,
+    [guildId, limit]
+  );
+  return rows;
+}
