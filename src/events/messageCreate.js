@@ -1,7 +1,7 @@
 import { Events } from 'discord.js';
 import { ensureGuildRecord } from '../services/guildSettingsService.js';
 import { getUserProfile } from '../services/profileService.js';
-import { getRecentMemories } from '../services/memoryService.js';
+import { addMemory, getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
 import { generateResponse } from '../services/ai/geminiClient.js';
@@ -98,8 +98,12 @@ export async function execute(message, context) {
       replyContext
     });
 
-    const response = await generateResponse(prompt);
+    const response = await generateResponse(prompt, pool);
     await message.reply(response);
+
+    if (guildRow.memory_enabled) {
+      await addMemory(pool, guildRow.id, userProfile.id, message.cleanContent);
+    }
 
     logDebug('Responded to selected user', {
       guild: message.guild.id,

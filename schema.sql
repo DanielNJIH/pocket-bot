@@ -90,3 +90,10 @@ CREATE TABLE IF NOT EXISTS user_memories (
   CONSTRAINT fk_memories_guild FOREIGN KEY (guild_id) REFERENCES guilds(id) ON DELETE CASCADE,
   INDEX idx_memory_lookup (user_id, guild_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS gemini_api_keys (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  api_key VARCHAR(255) NOT NULL,
+  active TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
