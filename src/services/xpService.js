@@ -52,8 +52,7 @@ function buildThresholds(thresholds) {
   return scaled;
 }
 
-// Fetch configured level thresholds and expand them with the scaling rules.
-async function loadThresholdsWithScaling(pool, guildId) {
+async function loadScaledThresholds(pool, guildId) {
   const thresholds = await getLevelThresholds(pool, guildId);
   return buildThresholds(thresholds);
 }
@@ -88,7 +87,7 @@ function getNextLevelEntry(currentLevel, thresholds) {
 }
 
 export async function getUserProgress(pool, guildId, userId) {
-  const thresholds = await loadThresholdsWithScaling(pool, guildId);
+  const thresholds = await loadScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userId, guildId);
   const currentLevelThreshold = thresholds.find((entry) => entry.level === stats.level)?.threshold || 0;
   const nextEntry = getNextLevelEntry(stats.level, thresholds);
@@ -115,7 +114,7 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
   }
 
   const guildId = guildRow.id;
-  const thresholds = await loadThresholdsWithScaling(pool, guildId);
+  const thresholds = await loadScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userProfile.id, guildId);
   const amount = guildRow.xp_per_interaction || 0;
 
