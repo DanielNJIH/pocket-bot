@@ -1,4 +1,5 @@
 import { DEFAULT_LEVEL_THRESHOLDS } from '../config/constants.js';
+import { env } from '../config/env.js';
 import { logDebug } from '../utils/logger.js';
 
 export async function ensureGuildRecord(pool, discordGuildId) {
@@ -6,17 +7,24 @@ export async function ensureGuildRecord(pool, discordGuildId) {
     `SELECT g.*, u.discord_user_id AS selected_discord_user_id
      FROM guilds g
      LEFT JOIN users u ON g.selected_user_id = u.id
-     WHERE g.discord_guild_id = ?`,
-    [discordGuildId]
+     WHERE g.discord_guild_id = ? AND g.bot_instance = ?`,
+    [discordGuildId, env.botInstance]
   );
 
   if (existing.length) {
     return existing[0];
   }
 
-  await pool.query('INSERT INTO guilds (discord_guild_id) VALUES (?)', [discordGuildId]);
-  logDebug('Created default guild row', { discordGuildId });
+  await pool.query('INSERT INTO guilds (discord_guild_id, bot_instance) VALUES (?, ?)', [
+    discordGuildId,
+    env.botInstance
+  ]);
+  logDebug('Created default guild row', { discordGuildId, botInstance: env.botInstance });
   return ensureGuildRecord(pool, discordGuildId);
+}
+
+export async function updateSelectedUser(pool, guildId, userId) {
+  await pool.query('UPDATE guilds SET selected_user_id = ? WHERE id = ?', [userId, guildId]);
 }
 
 export async function getLevelThresholds(pool, guildId) {
