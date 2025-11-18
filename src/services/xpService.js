@@ -1,7 +1,7 @@
 import { getLevelRoles, getLevelThresholds } from './guildSettingsService.js';
 import { logDebug } from '../utils/logger.js';
 
-async function ensureUserGuildStats(pool, userId, guildId) {
+export async function ensureUserGuildStats(pool, userId, guildId) {
   const [rows] = await pool.query(
     'SELECT * FROM user_guild_stats WHERE user_id = ? AND guild_id = ?',
     [userId, guildId]

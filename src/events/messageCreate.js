@@ -7,6 +7,7 @@ import { buildPrompt } from '../services/promptBuilder.js';
 import { generateResponse } from '../services/ai/geminiClient.js';
 import { awardInteractionXp } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
+import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 
 export const name = Events.MessageCreate;
 
@@ -58,6 +59,7 @@ export async function execute(message, context) {
       ? await getRecentMemories(pool, guildRow.id, userProfile.id)
       : [];
     const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow.id) : [];
+    await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
     const prompt = buildPrompt({
       guildSettings: guildRow,
       userProfile,

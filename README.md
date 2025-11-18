@@ -7,6 +7,7 @@ A multi-instance “Pocket Friend” Discord bot that bonds with a single **Sele
 - Even the Selected User only triggers replies when they mention the bot, use a configured codeword, or reply directly to the bot.
 - Responses use Gemini with structured context: guild language settings, the user profile, lightweight memory, and any rules configured for the guild.
 - XP is awarded per successful interaction and can unlock configured Discord roles with announcement messages.
+- Upcoming birthdays (within 7 days) trigger a heads-up in the configured birthday channel.
 
 ## Project structure
 ```
@@ -28,8 +29,12 @@ schema.sql         // MySQL schema for phpMyAdmin or CLI import
 3. Install dependencies: `npm install`.
 4. Start the bot: `npm start`.
 
+### Birthday alerts
+- Set `birthday_channel_id` in the `guilds` table to the target text channel ID for birthday heads-ups.
+- Store user birthdays in the `users` table (`birthday` column) to enable the announcements.
+
 ## Key files
-- `schema.sql` — tables for users, guilds, XP/levels, level roles, rulesets, and lightweight memory.
+- `schema.sql` — tables for users, guilds, XP/levels, level roles, rulesets, lightweight memory, and birthday announcements.
 - `src/index.js` — Discord client bootstrap, event registration, and process-level error logging.
 - `src/events/messageCreate.js` — enforces the Selected User gating, trigger checks, prompt building, Gemini call, and XP updates.
 - `src/services/*` — modular data access and business rules for guild settings, profiles, XP, rules, memory, and prompt composition.
