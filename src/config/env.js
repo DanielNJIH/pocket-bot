@@ -11,11 +11,13 @@ function required(name, value) {
 
 export const env = {
   discordToken: required('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
+  botInstance: Number(required('BOT_INSTANCE', process.env.BOT_INSTANCE)),
   botName: process.env.BOT_NAME || 'PocketFriend',
   botPersonality:
     process.env.BOT_PERSONALITY ||
     'You are a friendly, loyal pocket friend who keeps conversations light, curious, and supportive.',
   geminiApiKey: required('GEMINI_API_KEY', process.env.GEMINI_API_KEY),
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash-latest',
   mysql: {
     host: required('MYSQL_HOST', process.env.MYSQL_HOST),
     port: Number(process.env.MYSQL_PORT || 3306),

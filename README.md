@@ -24,10 +24,16 @@ schema.sql         // MySQL schema for phpMyAdmin or CLI import
 ```
 
 ## Setup
-1. Copy `.env.example` to `.env` and fill in Discord, Gemini, and MySQL credentials.
+1. Copy `.env.example` to `.env` and fill in Discord, Gemini, and MySQL credentials. Set a unique `BOT_INSTANCE` number for each bot identity sharing the same database.
 2. Import `schema.sql` into your MySQL database (phpMyAdmin or CLI).
 3. Install dependencies: `npm install`.
 4. Start the bot: `npm start`.
+
+The Gemini client defaults to the free `gemini-1.5-flash-latest` model from AI Studio; override with `GEMINI_MODEL` in `.env` if you want a different model.
+
+### Slash commands
+- `/set-selected-user`: choose which guild member this bot instance should listen to.
+- `/bot-status`: show the current bot instance number and which user is selected for this guild.
 
 ### Birthday alerts
 - Set `birthday_channel_id` in the `guilds` table to the target text channel ID for birthday heads-ups.
@@ -46,4 +52,4 @@ schema.sql         // MySQL schema for phpMyAdmin or CLI import
 4. On trigger, the handler pulls the profile, memory, and rules, builds a structured prompt, calls Gemini, replies, and awards XP/roles with optional announcements.
 
 ## Multi-instance note
-All bot instances share the same MySQL database. Swapping Discord tokens, names, or personalities simply changes the “face” of the bot; the shared data model keeps XP, profiles, rules, and Selected User enforcement consistent across instances.
+All bot instances share the same MySQL database. Swapping Discord tokens, names, or personalities simply changes the “face” of the bot; the shared data model keeps XP, profiles, rules, and Selected User enforcement consistent across instances. Use the `BOT_INSTANCE` environment variable to assign a unique number to each running bot so that guild settings (including the Selected User) stay isolated per bot identity.
