@@ -16,6 +16,7 @@ export const env = {
     process.env.BOT_PERSONALITY ||
     'You are a friendly, loyal pocket friend who keeps conversations light, curious, and supportive.',
   geminiApiKey: required('GEMINI_API_KEY', process.env.GEMINI_API_KEY),
+  devGuildId: process.env.DEV_GUILD_ID || null,
   mysql: {
     host: required('MYSQL_HOST', process.env.MYSQL_HOST),
     port: Number(process.env.MYSQL_PORT || 3306),

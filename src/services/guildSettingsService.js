@@ -11,8 +11,16 @@ export async function ensureGuildRecord(pool, discordGuildId) {
   );
 
   if (existing.length) {
-    return existing[0];
-  }
+  return existing[0];
+}
+
+export async function setSelectedUser(pool, guildId, userId) {
+  await pool.query('UPDATE guilds SET selected_user_id = ? WHERE id = ?', [userId, guildId]);
+}
+
+export async function setBirthdayChannel(pool, guildId, channelId) {
+  await pool.query('UPDATE guilds SET birthday_channel_id = ? WHERE id = ?', [channelId, guildId]);
+}
 
   await pool.query('INSERT INTO guilds (discord_guild_id) VALUES (?)', [discordGuildId]);
   logDebug('Created default guild row', { discordGuildId });
