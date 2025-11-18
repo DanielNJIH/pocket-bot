@@ -39,12 +39,14 @@ import {
   getNextRoleReward,
   getLeaderboard,
   getUserProgress,
-  resetUserStats
+  resetUserStats,
+  setUserXp
 } from '../services/xpService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
 import { generateResponse } from '../services/ai/geminiClient.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { logDebug, logError } from '../utils/logger.js';
+import { applyNameFallback, buildGuildDirectory } from '../utils/memberDirectory.js';
 
 const PREFIX = '!sys';
 
@@ -95,7 +97,7 @@ const USER_HELP_LINES = [
   '- `!sys profile set-name <text>` / `set-about <text>` / `set-preferences <text>` / `set-birthday <YYYY-MM-DD>` — update your profile.',
   '- `!sys profile show [@user|name]` — display a stored profile.',
   '- `!sys birthday when [@user|name]` — show a saved birthday.',
-  '- `!sys xp` — see your XP and level.',
+  '- `!sys xp [@user|id|name]` — see XP and level for yourself or another user.',
   '- `!sys leaderboard [limit]` — show top XP earners (if you are the selected user).',
   '- `!sys memory <add|list|clear> ...` — manage your memories.',
   '- `!sys settings show` — show current guild settings.'
@@ -105,7 +107,7 @@ const ADMIN_HELP_LINES = [
   '- `!sys assign @user` — set the selected user (admin only).',
   '- `!sys birthday-channel set #channel` — choose the channel for birthday heads-ups.',
   '- `!sys xpchannel set #channel` — set the level-up announcement channel.',
-  '- `!sys xp set-amount <number>` / `toggle <true|false>` / `reset @user` — administer XP.',
+  '- `!sys xp set-amount <number>` / `toggle <true|false>` / `reset @user` / `set @user <xp>` — administer XP.',
   '- `!sys xprole list` — list level → role rewards.',
   '- `!sys xprole <add|remove> <level> @role` — manage level rewards.',
   '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules (admin only).',
@@ -162,6 +164,9 @@ function enforcePrefixAccess(message, guildRow, command, { adminCommand = false 
   }
 
   if (!isSelectedUser) {
+    if (isAdminUser && (adminCommand || command === 'xp')) {
+      return true;
+    }
     throw new PermissionError('Missing permissions or incorrect user.', { silent: true });
   }
 
@@ -442,12 +447,10 @@ async function handleXp(message, context, guildRow, tokens) {
   const sub = tokens[0];
 
   if (!sub || /^[0-9<@]/.test(sub)) {
-    await assertSelectedUser(message, guildRow);
+    await assertSelectedUserOrAdmin(message, guildRow);
     const targetUser = sub ? await resolveUserFromArg(pool, sub) : await ensureUserRecord(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
-    if (targetUser.discord_user_id !== message.author.id) {
-      return message.reply('You can only view your own XP.');
-    }
+
     const progress = await getUserProgress(pool, guildRow.id, targetUser.id);
     const nextRole = await getNextRoleReward(pool, guildRow.id, progress.level);
     const discordUser = await message.client.users.fetch(targetUser.discord_user_id);
@@ -455,11 +458,10 @@ async function handleXp(message, context, guildRow, tokens) {
     const nextLevelText = progress.nextLevel
       ? `Level ${progress.nextLevel} (${progress.xpToNext} XP left)`
       : 'Max level reached';
-    const nextRankText = progress.nextLevel
-      ? `${nextLevelText}${nextRole ? ` → <@&${nextRole.role_id}>` : ''}`
-      : nextRole
-        ? `Upcoming role: <@&${nextRole.role_id}> at level ${nextRole.level}`
-        : 'Highest rank reached';
+    const levelsAway = nextRole ? Math.max(nextRole.level - progress.level, 0) : null;
+    const nextRoleText = nextRole
+      ? `<@&${nextRole.role_id}> at level ${nextRole.level} (${levelsAway} level${levelsAway === 1 ? '' : 's'} away)`
+      : 'No upcoming role reward configured.';
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -472,8 +474,8 @@ async function handleXp(message, context, guildRow, tokens) {
         { name: 'Level', value: `${progress.level}`, inline: true },
         { name: 'Total XP', value: `${progress.xp}`, inline: true },
         { name: 'Next level', value: nextLevelText, inline: true },
-        { name: 'Progress', value: `${progressBar} (${Math.round(progress.progress * 100)}%)`, inline: false },
-        { name: 'Next rank', value: nextRankText, inline: false }
+        { name: 'Next role reward', value: nextRoleText, inline: true },
+        { name: 'Progress', value: `${progressBar} (${Math.round(progress.progress * 100)}%)`, inline: false }
       )
       .setFooter({ text: `XP per message: ${guildRow.xp_per_interaction} | Cooldown: 5s` });
     await message.reply({ embeds: [embed] });
@@ -494,6 +496,18 @@ async function handleXp(message, context, guildRow, tokens) {
     if (!targetUser) return message.reply('User not found.');
     await resetUserStats(pool, guildRow.id, targetUser.id);
     return message.reply(`Reset XP for <@${targetUser.discord_user_id}>.`);
+  }
+
+  if (sub === 'set') {
+    assertAdmin(message);
+    const targetUser = await resolveUserFromArg(pool, tokens[1]);
+    const amount = Number(tokens[2]);
+    if (!targetUser) return message.reply('User not found.');
+    if (Number.isNaN(amount)) return message.reply('Provide a numeric XP amount to set.');
+    const updated = await setUserXp(pool, guildRow.id, targetUser.id, amount);
+    return message.reply(
+      `Set XP for <@${targetUser.discord_user_id}> to ${updated.xp} (Level ${updated.level}).`
+    );
   }
 
   if (sub === 'toggle') {
@@ -640,9 +654,18 @@ async function handleSettingsShow(message, context, guildRow) {
 
 async function handleResponseTrigger(message, context, guildRow, content) {
   const { pool, client } = context;
-  const userProfile = await getUserProfile(pool, message.author.id, {
-    discordName: getDiscordNameFallback(message, message.author.id)
+  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(pool, message.guild, {
+    excludeUserId: message.author.id
   });
+  const discordName =
+    nameMap.get(message.author.id) || getDiscordNameFallback(message, message.author.id) || message.author.tag;
+  const userProfile = applyNameFallback(
+    await getUserProfile(pool, message.author.id, {
+      discordName
+    }),
+    nameMap,
+    discordName
+  );
   const memories = guildRow.memory_enabled
     ? await getRecentMemories(pool, guildRow.id, userProfile.id)
     : [];
@@ -655,6 +678,7 @@ async function handleResponseTrigger(message, context, guildRow, content) {
     memories,
     rules,
     xpProgress,
+    guildDirectory,
     message: content
   });
   const response = await generateResponse(prompt, pool);
