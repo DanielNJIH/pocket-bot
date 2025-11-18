@@ -52,33 +52,9 @@ function buildThresholds(thresholds) {
   return scaled;
 }
 
-async function getScaledThresholds(pool, guildId) {
+async function loadScaledThresholds(pool, guildId) {
   const thresholds = await getLevelThresholds(pool, guildId);
   return buildThresholds(thresholds);
-}
-
-function applyThresholdGrowth(thresholds, growthRate = 0.05) {
-  if (!thresholds?.length) return [];
-
-  const sorted = [...thresholds].sort((a, b) => a.level - b.level);
-  if (sorted.length === 1) return sorted;
-
-  const scaled = [sorted[0]];
-  let gap = Math.max(sorted[1].threshold - sorted[0].threshold, 1);
-  scaled.push({ level: sorted[1].level, threshold: sorted[0].threshold + gap });
-
-  for (let i = 2; i < sorted.length; i += 1) {
-    gap = Math.max(Math.round(gap * (1 + growthRate)), 1);
-    const nextThreshold = scaled[i - 1].threshold + gap;
-    scaled.push({ level: sorted[i].level, threshold: nextThreshold });
-  }
-
-  return scaled;
-}
-
-async function getScaledThresholds(pool, guildId) {
-  const thresholds = await getLevelThresholds(pool, guildId);
-  return applyThresholdGrowth(thresholds);
 }
 
 export async function ensureUserGuildStats(pool, userId, guildId) {
@@ -111,7 +87,7 @@ function getNextLevelEntry(currentLevel, thresholds) {
 }
 
 export async function getUserProgress(pool, guildId, userId) {
-  const thresholds = await getScaledThresholds(pool, guildId);
+  const thresholds = await loadScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userId, guildId);
   const currentLevelThreshold = thresholds.find((entry) => entry.level === stats.level)?.threshold || 0;
   const nextEntry = getNextLevelEntry(stats.level, thresholds);
@@ -138,7 +114,7 @@ export async function awardInteractionXp(pool, guildRow, userProfile) {
   }
 
   const guildId = guildRow.id;
-  const thresholds = await getScaledThresholds(pool, guildId);
+  const thresholds = await loadScaledThresholds(pool, guildId);
   const stats = await ensureUserGuildStats(pool, userProfile.id, guildId);
   const amount = guildRow.xp_per_interaction || 0;
 
