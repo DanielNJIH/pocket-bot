@@ -148,6 +148,8 @@ function assertAdmin(message) {
   if (!isAdmin(message)) {
     throw new PermissionError('Missing permissions or incorrect user.');
   }
+
+  return true;
 }
 
 function enforcePrefixAccess(message, guildRow, command, { allowAdminOverride = false } = {}) {
