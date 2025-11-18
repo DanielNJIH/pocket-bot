@@ -134,15 +134,19 @@ export async function resetUserStats(pool, guildId, userId) {
   return { ...stats, xp: 0, level: 1 };
 }
 
-export async function getLeaderboard(pool, guildId, limit = 10) {
+export async function getLeaderboard(pool, guild, limit = 10) {
+  const { discord_guild_id: discordGuildId, id: guildId } = guild;
   const [rows] = await pool.query(
-    `SELECT u.discord_user_id, u.display_name, s.xp, s.level
+    `SELECT u.discord_user_id, u.display_name, SUM(s.xp) AS xp, MAX(s.level) AS level
      FROM user_guild_stats s
      JOIN users u ON u.id = s.user_id
-     WHERE s.guild_id = ?
-     ORDER BY s.xp DESC
+     JOIN guilds g ON g.id = s.guild_id
+     WHERE g.discord_guild_id = ?
+       AND g.discord_guild_id IS NOT NULL
+     GROUP BY u.id
+     ORDER BY xp DESC
      LIMIT ?`,
-    [guildId, limit]
+    [discordGuildId || guildId, limit]
   );
   return rows;
 }
