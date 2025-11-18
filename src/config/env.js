@@ -11,6 +11,7 @@ function required(name, value) {
 
 export const env = {
   discordToken: required('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
+  botInstance: Number(required('BOT_INSTANCE', process.env.BOT_INSTANCE)),
   botName: process.env.BOT_NAME || 'PocketFriend',
   botPersonality:
     process.env.BOT_PERSONALITY ||
