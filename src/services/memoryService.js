@@ -14,6 +14,16 @@ export async function addMemory(pool, guildId, userId, content) {
     userId,
     content
   ]);
+
+  await pool.query(
+    `DELETE FROM user_memories
+      WHERE guild_id = ? AND user_id = ? AND id NOT IN (
+        SELECT id FROM (
+          SELECT id FROM user_memories WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?
+        ) recent
+      )`,
+    [guildId, userId, guildId, userId, MAX_MEMORY_ITEMS]
+  );
 }
 
 export async function listMemories(pool, guildId, userId) {
