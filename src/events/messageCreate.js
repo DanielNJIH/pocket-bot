@@ -5,7 +5,7 @@ import { getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
 import { generateResponse } from '../services/ai/geminiClient.js';
-import { awardInteractionXp } from '../services/xpService.js';
+import { awardInteractionXp, getUserProgress } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { handlePrefixCommand } from '../discord/prefixCommands.js';
@@ -72,11 +72,13 @@ export async function execute(message, context) {
       : [];
     const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow.id) : [];
     await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
+    const xpProgress = await getUserProgress(pool, guildRow.id, userProfile.id);
     const prompt = buildPrompt({
       guildSettings: guildRow,
       userProfile,
       memories,
       rules,
+      xpProgress,
       message: message.cleanContent,
       replyContext
     });

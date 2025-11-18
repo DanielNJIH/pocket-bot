@@ -5,6 +5,7 @@ export function buildPrompt({
   userProfile,
   memories = [],
   rules = [],
+  xpProgress,
   message,
   replyContext
 }) {
@@ -30,6 +31,14 @@ export function buildPrompt({
     ? `Replied message from ${replyContext.author}: ${replyContext.content}`
     : '';
 
+  const xpLine = xpProgress
+    ? `XP: Level ${xpProgress.level} with ${xpProgress.xp} XP. ${
+        xpProgress.nextLevel
+          ? `${xpProgress.xpToNext} XP until level ${xpProgress.nextLevel}`
+          : 'Max level reached'
+      }`
+    : '';
+
   return [
     `System: You are ${env.botName}, a personal pocket friend. Personality: ${env.botPersonality}.`,
     'Always respect these guardrails:',
@@ -42,6 +51,7 @@ export function buildPrompt({
     `User birthday: ${userProfile.birthday || 'Unknown'}`,
     `User preferences: ${preferencesText}`,
     userProfile.about ? `User profile note: ${userProfile.about}` : '',
+    xpLine,
     memorySnippets ? `Recent memory highlights:\n${memorySnippets}` : '',
     ruleSnippets ? `Relevant rules:\n${ruleSnippets}` : '',
     '',
