@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS guilds (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  discord_guild_id VARCHAR(32) NOT NULL UNIQUE,
+  discord_guild_id VARCHAR(32) NOT NULL,
+  bot_instance INT NOT NULL DEFAULT 1,
   primary_language VARCHAR(8) DEFAULT 'en',
   secondary_language VARCHAR(8),
   secondary_language_enabled TINYINT(1) DEFAULT 0,
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS guilds (
   log_channel_id VARCHAR(32),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_discord_bot (discord_guild_id, bot_instance),
   CONSTRAINT fk_guild_selected_user FOREIGN KEY (selected_user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
