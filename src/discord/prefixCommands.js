@@ -45,6 +45,28 @@ import { logDebug, logError } from '../utils/logger.js';
 
 const PREFIX = '!sys';
 
+const HELP_TEXT = [
+  '**Pocket Friend `!sys` commands**',
+  '- `!sys help` — show this help.',
+  '- `!sys assign @user` — set the selected user (only the current selected user can change it).',
+  '- `!sys codeword <add|remove|list> <word>` — manage trigger codewords.',
+  '- `!sys profile set-name <text>` / `set-about <text>` / `set-preferences <text>` / `set-birthday <YYYY-MM-DD>` — update your profile.',
+  '- `!sys profile show [@user|name]` — display a stored profile.',
+  '- `!sys birthday-channel set #channel` — choose the channel for birthday heads-ups.',
+  '- `!sys birthday when [@user|name]` — show a saved birthday.',
+  '- `!sys rules add name:"<name>" type:<game|server|custom> summary:"<summary>" content:"<text>"` — add rules.',
+  '- `!sys rules remove <name>` / `list [type]` / `show <name>` — manage rules.',
+  '- `!sys xp [@user|id]` — view XP. `set-amount <number>` sets XP per interaction. `reset @user` resets XP. `toggle <true|false>` enables or disables XP.',
+  '- `!sys leaderboard [limit]` — show top XP earners.',
+  '- `!sys xprole <add|remove> <level> @role` — map levels to roles.',
+  '- `!sys xpchannel set #channel` — set the level-up announcement channel.',
+  '- `!sys language set primary:<code> secondary:<code?> secondary_enabled:<true|false?>` — configure guild languages.',
+  '- `!sys memory <add|list|clear> ...` — manage lightweight memories.',
+  '- `!sys settings show` — show current guild settings.',
+  '',
+  'The bot replies only to the selected user when they ping the bot, use a configured codeword, or reply directly to the bot.'
+].join('\n');
+
 function tokenize(input) {
   const matches = input.match(/"([^"]*)"|'([^']*)'|[^\s]+/g) || [];
   return matches.map((m) => m.replace(/^['"]|['"]$/g, ''));
@@ -85,6 +107,11 @@ async function assertSelectedUser(message, guildRow) {
   if (message.author.id !== guildRow.selected_discord_user_id) {
     throw new Error('Only the selected user can run these commands.');
   }
+}
+
+async function handleHelp(message) {
+  await message.reply(HELP_TEXT);
+  return true;
 }
 
 async function handleAssign(message, context, guildRow, argsText) {
@@ -491,6 +518,8 @@ export async function handlePrefixCommand(message, context, guildRow) {
 
   try {
     switch (command) {
+      case 'help':
+        return await handleHelp(message);
       case 'assign':
         return await handleAssign(message, context, guildRow, rawAfterCommand);
       case 'codeword':
