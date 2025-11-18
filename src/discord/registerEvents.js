@@ -1,8 +1,7 @@
 import * as readyEvent from '../events/ready.js';
 import * as messageCreateEvent from '../events/messageCreate.js';
-import * as interactionCreateEvent from '../events/interactionCreate.js';
 
-const events = [readyEvent, messageCreateEvent, interactionCreateEvent];
+const events = [readyEvent, messageCreateEvent];
 
 export function registerEvents(client, context) {
   for (const event of events) {

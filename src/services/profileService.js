@@ -43,8 +43,3 @@ export async function upsertCodewords(pool, discordUserId, codewords) {
     discordUserId
   ]);
 }
-
-export async function setBirthday(pool, discordUserId, date) {
-  await ensureUserRecord(pool, discordUserId);
-  await pool.query('UPDATE users SET birthday = ? WHERE discord_user_id = ?', [date, discordUserId]);
-}
