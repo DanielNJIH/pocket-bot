@@ -3,6 +3,7 @@ import { logInfo } from '../utils/logger.js';
 export async function applyMigrations(pool) {
   await ensureGuildBotInstanceSupport(pool);
   await ensureGeminiApiKeyTable(pool);
+  await ensurePersonaSettingsColumn(pool);
 }
 
 async function ensureGuildBotInstanceSupport(pool) {
@@ -50,4 +51,12 @@ async function ensureGeminiApiKeyTable(pool) {
   );
 
   logInfo('Created gemini_api_keys table');
+}
+
+async function ensurePersonaSettingsColumn(pool) {
+  const [column] = await pool.query("SHOW COLUMNS FROM users LIKE 'persona_settings'");
+  if (column.length) return;
+
+  await pool.query("ALTER TABLE users ADD COLUMN persona_settings JSON AFTER codewords");
+  logInfo('Added persona_settings column to users table');
 }

@@ -20,10 +20,38 @@ function buildModelCandidates(modelName) {
   return [...new Set(names)];
 }
 
+const RATE_LIMIT_STATUS = 429;
+const DEFAULT_RATE_LIMIT_RETRIES = 2;
+const BASE_RETRY_DELAY_MS = 750;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function attemptGeneration(client, modelName, prompt) {
   const model = client.getGenerativeModel({ model: modelName });
-  const result = await model.generateContent([{ text: prompt }]);
-  return result.response.text().trim();
+  let attempt = 0;
+  const maxAttempts = DEFAULT_RATE_LIMIT_RETRIES + 1;
+  let lastError;
+
+  while (attempt < maxAttempts) {
+    try {
+      const result = await model.generateContent([{ text: prompt }]);
+      return result.response.text().trim();
+    } catch (err) {
+      const status = err?.status || err?.response?.status;
+      lastError = err;
+      attempt += 1;
+      if (status === RATE_LIMIT_STATUS && attempt < maxAttempts) {
+        const waitMs = BASE_RETRY_DELAY_MS * attempt;
+        await delay(waitMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('Gemini generation failed after retries.');
 }
 
 function isModelNotFound(err) {

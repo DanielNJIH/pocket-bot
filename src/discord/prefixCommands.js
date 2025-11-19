@@ -23,13 +23,17 @@ import {
   listMemories
 } from '../services/memoryService.js';
 import {
+  clearPersonaSettings,
   ensureUserRecord,
   findUserByDisplayName,
+  getPersonaSettings,
   getUserProfile,
   serializePreferences,
+  summarizePersonaSettings,
   updateAbout,
   updateBirthday,
   updateDisplayName,
+  updatePersonaSettings,
   upsertCodewords,
   upsertUserPreference
 } from '../services/profileService.js';
@@ -47,8 +51,13 @@ import { generateResponse } from '../services/ai/geminiClient.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { applyNameFallback, buildGuildDirectory } from '../utils/memberDirectory.js';
+import { buildBotIdentity } from '../utils/botIdentity.js';
+import { appendUserMessage, collectConversationContext } from '../utils/conversationContext.js';
+import { extractMemoryDirective } from '../utils/memoryParser.js';
+import { buildSelectedUserNames } from '../utils/selectedUserNames.js';
 
 const PREFIX = '!sys';
+const CONTEXT_LIMIT = 12;
 
 class PermissionError extends Error {
   constructor(message, { silent = false } = {}) {
@@ -100,6 +109,7 @@ const USER_HELP_LINES = [
   '- `!sys xp [@user|id|name]` — see XP and level for yourself or another user.',
   '- `!sys leaderboard [limit]` — show top XP earners (if you are the selected user).',
   '- `!sys memory <add|list|clear> ...` — manage your memories.',
+  '- `!sys persona <tone|style|roleplay|show|clear>` — customize how I respond to you.',
   '- `!sys settings show` — show current guild settings.'
 ];
 
@@ -648,6 +658,57 @@ async function handleMemory(message, context, guildRow, tokens, rawText) {
   return true;
 }
 
+async function handlePersona(message, context, guildRow, tokens, rawText) {
+  const { pool } = context;
+  await assertSelectedUser(message, guildRow);
+  const action = tokens[0]?.toLowerCase();
+  const remainder = rawText.slice(action?.length || 0).trim();
+  const editableFields = new Set(['tone', 'style', 'roleplay']);
+
+  if (!action) {
+    await message.reply('Usage: `!sys persona <tone|style|roleplay|show|clear>`');
+    return true;
+  }
+
+  if (action === 'show') {
+    const settings = await getPersonaSettings(pool, message.author.id);
+    const summary = summarizePersonaSettings(settings);
+    await message.reply(
+      summary === 'none' ? 'No persona overrides set.' : `Current persona overrides: ${summary}`
+    );
+    return true;
+  }
+
+  if (editableFields.has(action)) {
+    if (!remainder) {
+      await message.reply(`Provide a value for persona ${action}.`);
+      return true;
+    }
+    const updated = await updatePersonaSettings(pool, message.author.id, { [action]: remainder });
+    await message.reply(`Saved persona ${action}. Now: ${summarizePersonaSettings(updated)}`);
+    return true;
+  }
+
+  if (action === 'clear') {
+    const target = tokens[1]?.toLowerCase();
+    let fields = null;
+    if (target && target !== 'all') {
+      if (!editableFields.has(target)) {
+        await message.reply('Choose tone, style, roleplay, or all.');
+        return true;
+      }
+      fields = [target];
+    }
+    const updated = await clearPersonaSettings(pool, message.author.id, fields);
+    const summary = summarizePersonaSettings(updated);
+    await message.reply(summary === 'none' ? 'Persona overrides cleared.' : `Persona updated: ${summary}`);
+    return true;
+  }
+
+  await message.reply('Usage: `!sys persona <tone|style|roleplay|show|clear>`');
+  return true;
+}
+
 async function handleSettingsShow(message, context, guildRow) {
   await assertSelectedUser(message, guildRow);
   const settings = [
@@ -682,19 +743,33 @@ async function handleResponseTrigger(message, context, guildRow, content) {
   const rules = guildRow.rules_enabled ? await fetchRulesForPrompt(pool, guildRow) : [];
   const xpProgress = await getUserProgress(pool, guildRow, userProfile.id);
   await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
+  const botIdentity = buildBotIdentity(client, message.guild, userProfile.codewords);
+  const selectedUserNames = buildSelectedUserNames(userProfile, discordName);
+  let contextMessages = await collectConversationContext(
+    message.channel,
+    message.author.id,
+    client.user.id,
+    { limit: CONTEXT_LIMIT }
+  );
+  contextMessages = appendUserMessage(contextMessages, selectedUserNames.displayName, content, CONTEXT_LIMIT);
+  const personaSummary = summarizePersonaSettings(userProfile.persona_settings);
   const prompt = buildPrompt({
+    botIdentity,
     guildSettings: guildRow,
     userProfile,
+    selectedUserNames,
+    guildDirectory,
     memories,
     rules,
     xpProgress,
-    guildDirectory,
-    message: content
+    contextMessages,
+    userPersonaSummary: personaSummary
   });
-  const response = await generateResponse(prompt, pool);
-  await message.reply(response);
-  if (guildRow.memory_enabled) {
-    await addMemory(pool, guildRow.id, userProfile.id, content);
+  const rawResponse = await generateResponse(prompt, pool);
+  const { content: responseContent, memory } = extractMemoryDirective(rawResponse);
+  await message.reply(responseContent?.trim() ? responseContent : rawResponse);
+  if (memory && guildRow.memory_enabled) {
+    await addMemory(pool, guildRow.id, userProfile.id, memory);
   }
   await awardInteractionXp(pool, guildRow, userProfile);
   logDebug('Responded to selected user via prefix trigger', {
@@ -761,6 +836,8 @@ export async function handlePrefixCommand(message, context, guildRow) {
         return await handleLanguage(message, context, guildRow, tokens, rawAfterCommand);
       case 'memory':
         return await handleMemory(message, context, guildRow, tokens, rawAfterCommand);
+      case 'persona':
+        return await handlePersona(message, context, guildRow, tokens, rawAfterCommand);
       case 'settings':
         if (tokens[0] === 'show') return await handleSettingsShow(message, context, guildRow);
         break;
