@@ -32,8 +32,8 @@ export function applyNameFallback(profile, nameMap, fallbackName) {
   return { ...profile, discord_name: discordName, display_name: displayName };
 }
 
-export async function buildGuildDirectory(pool, guild, guildRow, { excludeUserId } = {}) {
-  const guildProfiles = await getGuildUserProfiles(pool, guildRow.id);
+export async function buildGuildDirectory(pool, guild, { excludeUserId } = {}) {
+  const guildProfiles = await getGuildUserProfiles(pool, guild.id);
   const nameMap = await buildMemberNameMap(
     guild,
     guildProfiles.map((profile) => profile.discord_user_id)
