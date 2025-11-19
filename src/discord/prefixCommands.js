@@ -179,13 +179,15 @@ function enforcePrefixAccess(message, guildRow, command, { adminCommand = false 
 
 async function resolveUserFromArg(pool, arg) {
   if (!arg) return null;
-  const mentionMatch = arg.match(/<(?:@|@!)?(\d+)>/);
-  const discordId = mentionMatch ? mentionMatch[1] : /^[0-9]{5,}$/.test(arg) ? arg : null;
+  const cleaned = arg.trim();
+  if (!cleaned) return null;
+  const mentionMatch = cleaned.match(/<(?:@|@!)?(\d+)>/);
+  const discordId = mentionMatch ? mentionMatch[1] : /^[0-9]{5,}$/.test(cleaned) ? cleaned : null;
   if (discordId) {
     const user = await ensureUserRecord(pool, discordId);
     return user;
   }
-  const named = await findUserByDisplayName(pool, arg);
+  const named = await findUserByDisplayName(pool, cleaned);
   return named || null;
 }
 
@@ -357,7 +359,7 @@ async function handleBirthdayChannel(message, context, guildRow, tokens) {
     await message.reply('Please mention a channel.');
     return true;
   }
-  await setBirthdayChannel(pool, guildRow.id, channelId);
+  await setBirthdayChannel(pool, guildRow, channelId);
   await message.reply(`Birthday channel set to <#${channelId}>.`);
   return true;
 }
@@ -395,7 +397,7 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
       return true;
     }
     const creator = await ensureUserRecord(pool, message.author.id);
-    await addRule(pool, guildRow.id, {
+    await addRule(pool, guildRow, {
       name,
       type,
       summary,
@@ -412,14 +414,14 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
       await message.reply('Usage: `!sys rules remove <name>`');
       return true;
     }
-    const removed = await removeRule(pool, guildRow.id, name);
+    const removed = await removeRule(pool, guildRow, name);
     await message.reply(removed ? `Removed rule **${name}**.` : 'No rule by that name.');
     return true;
   }
 
   if (action === 'list') {
     const type = tokens[1];
-    const rules = await listRules(pool, guildRow.id, type);
+    const rules = await listRules(pool, guildRow, type);
     if (!rules.length) {
       await message.reply('No rules configured.');
       return true;
@@ -432,7 +434,7 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
   if (action === 'show') {
     const name = remainder || tokens[1];
     if (!name) return message.reply('Usage: `!sys rules show <name>`');
-    const rule = await getRule(pool, guildRow.id, name);
+    const rule = await getRule(pool, guildRow, name);
     if (!rule) return message.reply('Rule not found.');
     await message.reply(formatRule(rule));
     return true;
@@ -451,8 +453,8 @@ async function handleXp(message, context, guildRow, tokens) {
     const targetUser = sub ? await resolveUserFromArg(pool, sub) : await ensureUserRecord(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
 
-    const progress = await getUserProgress(pool, guildRow.id, targetUser.id);
-    const nextRole = await getNextRoleReward(pool, guildRow.id, progress.level);
+    const progress = await getUserProgress(pool, guildRow, targetUser.id);
+    const nextRole = await getNextRoleReward(pool, guildRow, progress.level);
     const discordUser = await message.client.users.fetch(targetUser.discord_user_id);
     const progressBar = buildProgressBar(progress.progress);
     const nextLevelText = progress.nextLevel
@@ -486,7 +488,7 @@ async function handleXp(message, context, guildRow, tokens) {
     assertAdmin(message);
     const amount = Number(tokens[1]);
     if (Number.isNaN(amount)) return message.reply('Provide a numeric amount.');
-    await setXpPerInteraction(pool, guildRow.id, amount);
+    await setXpPerInteraction(pool, guildRow, amount);
     return message.reply(`XP per interaction set to ${amount}.`);
   }
 
@@ -513,7 +515,7 @@ async function handleXp(message, context, guildRow, tokens) {
   if (sub === 'toggle') {
     assertAdmin(message);
     const enabled = tokens[1]?.toLowerCase() === 'true';
-    await toggleXp(pool, guildRow.id, enabled);
+    await toggleXp(pool, guildRow, enabled);
     return message.reply(`XP has been ${enabled ? 'enabled' : 'disabled'}.`);
   }
 
@@ -546,7 +548,7 @@ async function handleXpRole(message, context, guildRow, tokens) {
   const level = Number(tokens[1]);
 
   if (action === 'list') {
-    const mappings = await getLevelRoles(pool, guildRow.id);
+    const mappings = await getLevelRoles(pool, guildRow);
     if (!mappings.length) {
       await message.reply('No level rewards configured.');
       return true;
@@ -564,17 +566,25 @@ async function handleXpRole(message, context, guildRow, tokens) {
     const roleId = message.mentions.roles.first()?.id || tokens[2];
     if (!roleId) return message.reply('Mention a role to award.');
     await pool.query(
-      'INSERT INTO level_roles (guild_id, level, role_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE role_id = VALUES(role_id)',
+      `DELETE lr FROM level_roles lr
+       JOIN guilds g ON g.id = lr.guild_id
+       WHERE g.discord_guild_id = ? AND lr.level = ?`,
+      [guildRow.discord_guild_id, level]
+    );
+    await pool.query(
+      'INSERT INTO level_roles (guild_id, level, role_id) VALUES (?, ?, ?)',
       [guildRow.id, level, roleId]
     );
     await message.reply(`Role <@&${roleId}> will be granted at level ${level}.`);
     return true;
   }
   if (action === 'remove') {
-    const [result] = await pool.query('DELETE FROM level_roles WHERE guild_id = ? AND level = ?', [
-      guildRow.id,
-      level
-    ]);
+    const [result] = await pool.query(
+      `DELETE lr FROM level_roles lr
+       JOIN guilds g ON g.id = lr.guild_id
+       WHERE g.discord_guild_id = ? AND lr.level = ?`,
+      [guildRow.discord_guild_id, level]
+    );
     await message.reply(result.affectedRows ? 'Mapping removed.' : 'No mapping existed for that level.');
     return true;
   }
@@ -588,7 +598,7 @@ async function handleXpChannel(message, context, guildRow, tokens) {
   if (tokens[0] !== 'set') return message.reply('Usage: `!sys xpchannel set #channel`');
   const channelId = message.mentions.channels.first()?.id || tokens[1];
   if (!channelId) return message.reply('Please mention a channel.');
-  await setXpAnnouncementChannel(pool, guildRow.id, channelId);
+  await setXpAnnouncementChannel(pool, guildRow, channelId);
   return message.reply(`Level-up announcements will go to <#${channelId}>.`);
 }
 
@@ -601,7 +611,7 @@ async function handleLanguage(message, context, guildRow, tokens, raw) {
   const secondary = args.secondary;
   const secondaryEnabled = args.secondary_enabled ? args.secondary_enabled.toLowerCase() === 'true' : !!secondary;
   if (!primary) return message.reply('Primary language code is required.');
-  await updateLanguages(pool, guildRow.id, { primary, secondary, secondaryEnabled });
+  await updateLanguages(pool, guildRow, { primary, secondary, secondaryEnabled });
   return message.reply(`Languages set. Primary: ${primary}${secondary ? `, secondary: ${secondary} (${secondaryEnabled ? 'enabled' : 'disabled'})` : ''}`);
 }
 
@@ -669,8 +679,8 @@ async function handleResponseTrigger(message, context, guildRow, content) {
   const memories = guildRow.memory_enabled
     ? await getRecentMemories(pool, guildRow.id, userProfile.id)
     : [];
-  const rules = guildRow.rules_enabled ? await fetchRulesForPrompt(pool, guildRow.id) : [];
-  const xpProgress = await getUserProgress(pool, guildRow.id, userProfile.id);
+  const rules = guildRow.rules_enabled ? await fetchRulesForPrompt(pool, guildRow) : [];
+  const xpProgress = await getUserProgress(pool, guildRow, userProfile.id);
   await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
   const prompt = buildPrompt({
     guildSettings: guildRow,

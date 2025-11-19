@@ -8,7 +8,7 @@ import { generateResponse } from '../services/ai/geminiClient.js';
 import { awardInteractionXp, getUserProgress } from '../services/xpService.js';
 import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
-import { handlePrefixCommand } from '../discord/prefixCommands.js';
+import { handlePrefixCommand, PREFIX } from '../discord/prefixCommands.js';
 import { applyNameFallback, buildGuildDirectory } from '../utils/memberDirectory.js';
 
 export const name = Events.MessageCreate;
@@ -37,9 +37,18 @@ export async function execute(message, context) {
   const guildRow = await ensureGuildRecord(pool, message.guild.id);
   const selectedUserId = guildRow.selected_discord_user_id;
 
-  const handled = await handlePrefixCommand(message, context, guildRow);
-  if (handled) {
-    return;
+  const trimmedContent = message.content?.trim() || '';
+  const isSysCommand = trimmedContent.toLowerCase().startsWith(PREFIX);
+
+  if (isSysCommand) {
+    if (!selectedUserId || message.author.id !== selectedUserId) {
+      return;
+    }
+
+    const handled = await handlePrefixCommand(message, context, guildRow);
+    if (handled) {
+      return;
+    }
   }
 
   if (!selectedUserId) {
@@ -102,9 +111,9 @@ export async function execute(message, context) {
     const memories = guildRow.memory_enabled
       ? await getRecentMemories(pool, guildRow.id, userProfile.id)
       : [];
-    const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow.id) : [];
+    const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow) : [];
     await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
-    const xpProgress = await getUserProgress(pool, guildRow.id, userProfile.id);
+    const xpProgress = await getUserProgress(pool, guildRow, userProfile.id);
     const prompt = buildPrompt({
       guildSettings: guildRow,
       userProfile,

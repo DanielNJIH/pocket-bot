@@ -64,8 +64,11 @@ export async function upsertCodewords(pool, discordUserId, codewords) {
 }
 
 export async function findUserByDisplayName(pool, name) {
-  const [rows] = await pool.query('SELECT * FROM users WHERE display_name = ?', [name]);
-  return rows[0];
+  if (!name) return null;
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return null;
+  const [rows] = await pool.query('SELECT * FROM users WHERE LOWER(display_name) = ? LIMIT 1', [normalized]);
+  return rows[0] || null;
 }
 
 export async function getUserByDiscordId(pool, discordUserId) {
