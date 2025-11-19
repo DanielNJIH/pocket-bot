@@ -1,5 +1,7 @@
 import { env } from '../config/env.js';
 
+const GREETING_PATTERN = /^(hi|hey|hello|hallo|hola|bonjour|servus|moin|guten tag|guten morgen|guten abend|ciao|yo|sup)/i;
+
 function formatPreferences(preferences) {
   if (!preferences) return 'not provided';
   if (typeof preferences === 'string') return preferences;
@@ -71,7 +73,46 @@ function buildContextSummary(contextMessages) {
   if (!contextMessages?.length) {
     return 'No prior context. Treat the next user message as a fresh topic.';
   }
-  return contextMessages.map((entry) => `- ${entry.authorLabel}: ${entry.content}`).join('\n');
+  return contextMessages
+    .map((entry) => {
+      const speaker = entry.role === 'assistant' ? 'BOT' : 'USER';
+      const label = entry.authorLabel ? ` (${entry.authorLabel})` : '';
+      return `${speaker}${label}: ${entry.content}`;
+    })
+    .join('\n');
+}
+
+function extractLatestUserMessage(contextMessages) {
+  if (!Array.isArray(contextMessages)) {
+    return '';
+  }
+  for (let i = contextMessages.length - 1; i >= 0; i -= 1) {
+    const entry = contextMessages[i];
+    if (entry?.role === 'user' && entry.content) {
+      return entry.content;
+    }
+  }
+  return '';
+}
+
+function buildConversationStateHint(contextMessages, latestUserMessage) {
+  const normalizedLatest = typeof latestUserMessage === 'string' ? latestUserMessage.trim() : '';
+  const hasAssistantMessages = Array.isArray(contextMessages)
+    ? contextMessages.some((entry) => entry?.role === 'assistant')
+    : false;
+
+  if (!hasAssistantMessages) {
+    if (normalizedLatest && GREETING_PATTERN.test(normalizedLatest)) {
+      return 'The user greeted you first. A single friendly greeting back is okay, but keep it brief.';
+    }
+    return 'This feels like a fresh chat. Only greet once if it feels natural, otherwise jump into the topic.';
+  }
+
+  if (normalizedLatest && GREETING_PATTERN.test(normalizedLatest)) {
+    return 'The user greeted you mid-conversation. Acknowledge it quickly without restarting the chat.';
+  }
+
+  return 'Conversation already in progress—skip repetitive greetings and continue naturally from where you left off.';
 }
 
 export function buildPrompt({
@@ -91,11 +132,20 @@ export function buildPrompt({
   const secondaryLanguage = guildSettings?.secondary_language || 'none';
   const secondaryEnabled = Boolean(guildSettings?.secondary_language_enabled);
 
-  const contextBlock = buildContextSummary(contextMessages);
   const profileSummary = buildUserProfileSummary(userProfile);
   const xpSummary = buildXpSummary(xpProgress);
   const guildSummary = buildGuildSettingsSummary(guildSettings, rules, guildDirectory);
   const memorySummary = buildMemorySummary(memories);
+  const latestUserMessage = extractLatestUserMessage(contextMessages);
+  const conversationStateHint = buildConversationStateHint(contextMessages, latestUserMessage);
+  const hasContext = Array.isArray(contextMessages) && contextMessages.length > 0;
+  const contextSummary = buildContextSummary(contextMessages);
+  const formattedContextBlock = hasContext
+    ? `<<<CONTEXT\n${contextSummary}\n>>>`
+    : contextSummary;
+  const latestUserBlock = latestUserMessage
+    ? `<<<LATEST_USER_MESSAGE\n${latestUserMessage}\n>>>`
+    : 'No latest user message captured. If you generate a proactive message, keep it gentle and concise.';
 
   const preferredName = selectedUserNames?.preferredName || selectedUserNames?.displayName || 'friend';
   const displayName = selectedUserNames?.displayName || 'friend';
@@ -133,10 +183,14 @@ This bot is "bonded" to one selected user in each guild.
   - Secondary language: ${secondaryLanguage}
   - Secondary language enabled: ${secondaryEnabled}
 
-You receive recent messages as conversation context:
-${contextBlock}
+You receive recent messages as conversation context (the user already knows these messages; do NOT repeat them verbatim):
+${formattedContextBlock}
 
 Treat this as an ongoing chat, not as separate, independent requests.
+Conversation continuity hint: ${conversationStateHint}
+
+Latest user message you must respond to (use it, but do not parrot it unless necessary):
+${latestUserBlock}
 
 IMPORTANT:
 - Do NOT start every message with the same greeting (“Hi {User}, how can I help you?”).

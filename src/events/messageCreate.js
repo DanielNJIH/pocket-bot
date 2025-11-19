@@ -126,7 +126,8 @@ export async function execute(message, context) {
       contextMessages,
       selectedUserNames.displayName,
       message.cleanContent,
-      CONTEXT_LIMIT
+      CONTEXT_LIMIT,
+      message.id
     );
     const personaSummary = summarizePersonaSettings(userProfile.persona_settings);
     const prompt = buildPrompt({

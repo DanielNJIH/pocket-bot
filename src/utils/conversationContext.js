@@ -30,7 +30,8 @@ export async function collectConversationContext(channel, userId, botId, { limit
       .map((msg) => ({
         role: msg.author.id === botId ? 'assistant' : 'user',
         authorLabel: formatAuthorLabel(msg, msg.author.id === botId),
-        content: (msg.cleanContent || msg.content || '').trim()
+        content: (msg.cleanContent || msg.content || '').trim(),
+        messageId: msg.id
       }))
       .filter((entry) => entry.content);
   } catch (err) {
@@ -39,16 +40,19 @@ export async function collectConversationContext(channel, userId, botId, { limit
   }
 }
 
-export function appendUserMessage(context, authorLabel, content, limit = 12) {
+export function appendUserMessage(context, authorLabel, content, limit = 12, messageId) {
   if (!content || !content.trim()) {
     return context;
   }
   const normalized = Array.isArray(context) ? context : [];
+  if (messageId && normalized.some((entry) => entry?.messageId === messageId)) {
+    return normalized;
+  }
   const trimmed = content.trim();
   const lastEntry = normalized[normalized.length - 1];
   if (lastEntry && lastEntry.role === 'user' && lastEntry.content === trimmed && lastEntry.authorLabel === authorLabel) {
     return normalized;
   }
-  const updated = [...normalized, { role: 'user', authorLabel, content: trimmed }];
+  const updated = [...normalized, { role: 'user', authorLabel, content: trimmed, messageId }];
   return updated.slice(-limit);
 }
