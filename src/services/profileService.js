@@ -9,6 +9,28 @@ function parseJson(value) {
   }
 }
 
+function parsePersonaSettings(value) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function normalizePersonaSettings(settings = {}) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (!value) continue;
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed) {
+      normalized[key] = trimmed;
+    }
+  }
+  return normalized;
+}
+
 export async function ensureUserRecord(pool, discordUserId) {
   const [rows] = await pool.query('SELECT * FROM users WHERE discord_user_id = ?', [discordUserId]);
   if (rows.length) {
@@ -25,7 +47,8 @@ export async function getUserProfile(pool, discordUserId, { discordName } = {}) 
     ...user,
     discord_name: discordName,
     preferences: parseJson(user.preferences),
-    codewords: parseJson(user.codewords) || []
+    codewords: parseJson(user.codewords) || [],
+    persona_settings: parsePersonaSettings(user.persona_settings)
   };
 }
 
@@ -61,6 +84,45 @@ export async function upsertCodewords(pool, discordUserId, codewords) {
     JSON.stringify(codewords || []),
     discordUserId
   ]);
+}
+
+export async function getPersonaSettings(pool, discordUserId) {
+  const user = await ensureUserRecord(pool, discordUserId);
+  return parsePersonaSettings(user.persona_settings);
+}
+
+export async function updatePersonaSettings(pool, discordUserId, updates) {
+  const user = await ensureUserRecord(pool, discordUserId);
+  const current = parsePersonaSettings(user.persona_settings);
+  const merged = normalizePersonaSettings({ ...current, ...(updates || {}) });
+  const payload = Object.keys(merged).length ? JSON.stringify(merged) : null;
+  await pool.query('UPDATE users SET persona_settings = ? WHERE discord_user_id = ?', [payload, discordUserId]);
+  return merged;
+}
+
+export async function clearPersonaSettings(pool, discordUserId, keys) {
+  const user = await ensureUserRecord(pool, discordUserId);
+  let current = parsePersonaSettings(user.persona_settings);
+  if (Array.isArray(keys) && keys.length) {
+    for (const key of keys) {
+      delete current[key];
+    }
+  } else {
+    current = {};
+  }
+  const normalized = normalizePersonaSettings(current);
+  const payload = Object.keys(normalized).length ? JSON.stringify(normalized) : null;
+  await pool.query('UPDATE users SET persona_settings = ? WHERE discord_user_id = ?', [payload, discordUserId]);
+  return normalized;
+}
+
+export function summarizePersonaSettings(settings) {
+  const normalized = normalizePersonaSettings(settings);
+  const entries = Object.entries(normalized);
+  if (!entries.length) {
+    return 'none';
+  }
+  return entries.map(([key, value]) => `${key}: ${value}`).join(' | ');
 }
 
 export async function findUserByDisplayName(pool, name) {
