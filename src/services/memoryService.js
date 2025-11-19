@@ -9,10 +9,13 @@ export async function getRecentMemories(pool, guildId, userId) {
 }
 
 export async function addMemory(pool, guildId, userId, content) {
+  if (!content || !content.trim()) {
+    return;
+  }
   await pool.query('INSERT INTO user_memories (guild_id, user_id, content) VALUES (?, ?, ?)', [
     guildId,
     userId,
-    content
+    content.trim()
   ]);
 
   await pool.query(

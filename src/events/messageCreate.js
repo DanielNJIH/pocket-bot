@@ -1,6 +1,6 @@
 import { Events } from 'discord.js';
 import { ensureGuildRecord } from '../services/guildSettingsService.js';
-import { getUserProfile } from '../services/profileService.js';
+import { getUserProfile, summarizePersonaSettings } from '../services/profileService.js';
 import { addMemory, getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
 import { buildPrompt } from '../services/promptBuilder.js';
@@ -10,6 +10,12 @@ import { logDebug, logError } from '../utils/logger.js';
 import { maybeSendUpcomingBirthdayMessage } from '../services/birthdayService.js';
 import { handlePrefixCommand, PREFIX } from '../discord/prefixCommands.js';
 import { applyNameFallback, buildGuildDirectory } from '../utils/memberDirectory.js';
+import { buildBotIdentity } from '../utils/botIdentity.js';
+import { appendUserMessage, collectConversationContext } from '../utils/conversationContext.js';
+import { extractMemoryDirective } from '../utils/memoryParser.js';
+import { buildSelectedUserNames } from '../utils/selectedUserNames.js';
+
+const CONTEXT_LIMIT = 12;
 
 export const name = Events.MessageCreate;
 
@@ -96,12 +102,6 @@ export async function execute(message, context) {
   const codewordHit = hasCodewordHit(message.content, userProfile.codewords);
   const referencedMessage = mentioned || message.reference ? await fetchReferencedMessage(message) : null;
   const replyTriggered = referencedMessage?.author.id === client.user.id;
-  const replyContext = mentioned && referencedMessage
-    ? {
-        author: referencedMessage.author.tag || referencedMessage.author.username || referencedMessage.author.id,
-        content: referencedMessage.cleanContent || referencedMessage.content
-      }
-    : null;
 
   if (!mentioned && !codewordHit && !replyTriggered) {
     return;
@@ -114,22 +114,41 @@ export async function execute(message, context) {
     const rules = guildRow.rules_enabled ? await getRulesForGuild(pool, guildRow) : [];
     await maybeSendUpcomingBirthdayMessage({ pool, guildRow, guild: message.guild, userProfile });
     const xpProgress = await getUserProgress(pool, guildRow, userProfile.id);
+    const botIdentity = buildBotIdentity(client, message.guild, userProfile.codewords);
+    const selectedUserNames = buildSelectedUserNames(userProfile, discordName);
+    let contextMessages = await collectConversationContext(
+      message.channel,
+      message.author.id,
+      client.user.id,
+      { limit: CONTEXT_LIMIT }
+    );
+    contextMessages = appendUserMessage(
+      contextMessages,
+      selectedUserNames.displayName,
+      message.cleanContent,
+      CONTEXT_LIMIT
+    );
+    const personaSummary = summarizePersonaSettings(userProfile.persona_settings);
     const prompt = buildPrompt({
+      botIdentity,
       guildSettings: guildRow,
       userProfile,
+      selectedUserNames,
       guildDirectory,
       memories,
       rules,
       xpProgress,
-      message: message.cleanContent,
-      replyContext
+      contextMessages,
+      userPersonaSummary: personaSummary
     });
 
-    const response = await generateResponse(prompt, pool);
-    await message.reply(response);
+    const rawResponse = await generateResponse(prompt, pool);
+    const { content: responseContent, memory } = extractMemoryDirective(rawResponse);
+    const replyText = responseContent?.trim() ? responseContent : rawResponse;
+    await message.reply(replyText);
 
-    if (guildRow.memory_enabled) {
-      await addMemory(pool, guildRow.id, userProfile.id, message.cleanContent);
+    if (memory && guildRow.memory_enabled) {
+      await addMemory(pool, guildRow.id, userProfile.id, memory);
     }
 
     logDebug('Responded to selected user', {
