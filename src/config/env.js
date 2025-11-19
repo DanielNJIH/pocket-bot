@@ -14,6 +14,7 @@ const botCodename = process.env.BOT_CODENAME || process.env.BOT_NAME || 'PocketF
 export const env = {
   discordToken: required('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
   botInstance: Number(required('BOT_INSTANCE', process.env.BOT_INSTANCE)),
+  botOwnerUserId: required('BOT_OWNER_USER_ID', process.env.BOT_OWNER_USER_ID),
   botName: botCodename,
   botPersonality:
     process.env.BOT_PERSONALITY ||

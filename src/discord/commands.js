@@ -1,7 +1,6 @@
 import { MessageFlags, PermissionsBitField, SlashCommandBuilder } from 'discord.js';
-import { env } from '../config/env.js';
-import { ensureGuildRecord, updateSelectedUser } from '../services/guildSettingsService.js';
-import { ensureUserRecord } from '../services/profileService.js';
+import { getOrCreateGuild, updateSelectedUser } from '../services/guildSettingsService.js';
+import { getOrCreateUser } from '../services/profileService.js';
 import { logError, logInfo } from '../utils/logger.js';
 
 function isInteractionAdmin(interaction) {
@@ -38,12 +37,12 @@ const setSelectedUserCommand = {
 
     const { pool } = context;
     const targetUser = interaction.options.getUser('user', true);
-    const guildRow = await ensureGuildRecord(pool, interaction.guildId);
-    const userRow = await ensureUserRecord(pool, targetUser.id);
+    const guildRow = await getOrCreateGuild(pool, interaction.guildId);
+    const userRow = await getOrCreateUser(pool, targetUser.id);
     await updateSelectedUser(pool, guildRow.id, userRow.id);
 
     await interaction.reply({
-      content: `Selected user updated to ${targetUser} for bot instance #${env.botInstance}.`,
+      content: `Selected user updated to ${targetUser}.`,
       flags: MessageFlags.Ephemeral
     });
   }
@@ -65,12 +64,12 @@ const botStatusCommand = {
     if (!(await requireAdmin(interaction))) return;
 
     const { pool } = context;
-    const guildRow = await ensureGuildRecord(pool, interaction.guildId);
+    const guildRow = await getOrCreateGuild(pool, interaction.guildId);
     const selectedUserId = guildRow.selected_discord_user_id;
     const selectedUserLabel = selectedUserId ? `<@${selectedUserId}>` : 'not configured';
 
     await interaction.reply({
-      content: `Bot instance: #${env.botInstance}\nSelected user: ${selectedUserLabel}`,
+      content: `Selected user: ${selectedUserLabel}`,
       flags: MessageFlags.Ephemeral
     });
   }
@@ -91,7 +90,6 @@ export async function registerSlashCommands(client) {
   }
 
   logInfo('Slash commands registered', {
-    botInstance: env.botInstance,
     guilds: guilds.size,
     commands: commandData.length
   });

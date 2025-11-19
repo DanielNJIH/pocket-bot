@@ -1,5 +1,4 @@
 import { Events } from 'discord.js';
-import { env } from '../config/env.js';
 import { registerSlashCommands } from '../discord/commands.js';
 import { logError, logInfo } from '../utils/logger.js';
 
@@ -8,7 +7,7 @@ export const once = true;
 
 export async function execute(client, context) {
   const { pool } = context;
-  logInfo(`Logged in as ${client.user.tag} (bot instance #${env.botInstance})`);
+  logInfo(`Logged in as ${client.user.tag}`);
 
   try {
     await pool.query('SELECT 1');

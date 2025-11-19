@@ -23,8 +23,9 @@ import {
   listMemories
 } from '../services/memoryService.js';
 import {
-  ensureUserRecord,
+  getOrCreateUser,
   findUserByDisplayName,
+  findUserProfileByDisplayName,
   getUserProfile,
   serializePreferences,
   updateAbout,
@@ -146,6 +147,10 @@ function isAdmin(message) {
   return message.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild);
 }
 
+function isOwner(message) {
+  return message.author.id === env.botOwnerUserId;
+}
+
 function assertAdmin(message) {
   if (!isAdmin(message)) {
     throw new PermissionError('Missing permissions or incorrect user.');
@@ -179,13 +184,15 @@ function enforcePrefixAccess(message, guildRow, command, { adminCommand = false 
 
 async function resolveUserFromArg(pool, arg) {
   if (!arg) return null;
-  const mentionMatch = arg.match(/<(?:@|@!)?(\d+)>/);
-  const discordId = mentionMatch ? mentionMatch[1] : /^[0-9]{5,}$/.test(arg) ? arg : null;
+  const input = arg.trim();
+  if (!input) return null;
+  const mentionMatch = input.match(/<(?:@|@!)?(\d+)>/);
+  const discordId = mentionMatch ? mentionMatch[1] : /^[0-9]{5,}$/.test(input) ? input : null;
   if (discordId) {
-    const user = await ensureUserRecord(pool, discordId);
+    const user = await getOrCreateUser(pool, discordId);
     return user;
   }
-  const named = await findUserByDisplayName(pool, arg);
+  const named = await findUserByDisplayName(pool, input);
   return named || null;
 }
 
@@ -233,7 +240,7 @@ async function handleAssign(message, context, guildRow, argsText) {
   }
 
   await updateSelectedUser(pool, guildRow.id, user.id);
-  await message.reply(`Selected user updated to <@${user.discord_user_id}> for bot instance #${env.botInstance}.`);
+  await message.reply(`Selected user updated to <@${user.discord_user_id}>.`);
   return true;
 }
 
@@ -317,16 +324,24 @@ async function handleProfile(message, context, guildRow, tokens, fullText) {
 
   if (action === 'show') {
     await assertSelectedUser(message, guildRow);
-    const targetArg = rest;
-    const targetUser = targetArg ? await resolveUserFromArg(pool, targetArg) : await ensureUserRecord(pool, message.author.id);
-    if (!targetUser) return message.reply('Could not find that user.');
-    const discordUser = await fetchDiscordUser(message, targetUser.discord_user_id);
-    const profile = await getUserProfile(pool, targetUser.discord_user_id, {
-      discordName: getDiscordNameFallback(message, targetUser.discord_user_id) ||
-        discordUser?.globalName ||
-        discordUser?.username ||
-        discordUser?.tag
-    });
+    const targetArg = rest.trim();
+    let profile;
+    if (targetArg) {
+      const resolved = await resolveUserFromArg(pool, targetArg);
+      if (resolved) {
+        profile = await getUserProfile(pool, resolved.discord_user_id, {
+          discordName: getDiscordNameFallback(message, resolved.discord_user_id)
+        });
+      } else {
+        profile = await findUserProfileByDisplayName(pool, targetArg);
+      }
+    } else {
+      profile = await getUserProfile(pool, message.author.id, {
+        discordName: getDiscordNameFallback(message, message.author.id)
+      });
+    }
+    if (!profile) return message.reply('Could not find that user.');
+    const discordUser = await fetchDiscordUser(message, profile.discord_user_id);
     const codewords = profile.codewords?.join(', ') || 'none';
     const age = calculateAge(profile.birthday);
     return message.reply(
@@ -365,15 +380,26 @@ async function handleBirthdayChannel(message, context, guildRow, tokens) {
 async function handleBirthdayWhen(message, context, guildRow, tokens) {
   const { pool } = context;
   assertSelectedUserOrAdmin(message, guildRow, { allowAdmin: true });
-  const targetArg = tokens.join(' ');
-  const user = targetArg ? await resolveUserFromArg(pool, targetArg) : await ensureUserRecord(pool, message.author.id);
-  if (!user) {
+  const targetArg = tokens.join(' ').trim();
+  let profile;
+  if (targetArg) {
+    const resolved = await resolveUserFromArg(pool, targetArg);
+    if (resolved) {
+      profile = await getUserProfile(pool, resolved.discord_user_id, {
+        discordName: getDiscordNameFallback(message, resolved.discord_user_id)
+      });
+    } else {
+      profile = await findUserProfileByDisplayName(pool, targetArg);
+    }
+  } else {
+    profile = await getUserProfile(pool, message.author.id, {
+      discordName: getDiscordNameFallback(message, message.author.id)
+    });
+  }
+  if (!profile) {
     await message.reply('User not found.');
     return true;
   }
-  const profile = await getUserProfile(pool, user.discord_user_id, {
-    discordName: getDiscordNameFallback(message, user.discord_user_id)
-  });
   await message.reply(`Birthday for <@${profile.discord_user_id}>: ${profile.birthday || 'Not set'}`);
   return true;
 }
@@ -394,7 +420,7 @@ async function handleRules(message, context, guildRow, tokens, rawText) {
       await message.reply('Usage: `!sys rules add name:"Raid" type:game summary:"..." content:"details"`');
       return true;
     }
-    const creator = await ensureUserRecord(pool, message.author.id);
+    const creator = await getOrCreateUser(pool, message.author.id);
     await addRule(pool, guildRow.id, {
       name,
       type,
@@ -448,7 +474,7 @@ async function handleXp(message, context, guildRow, tokens) {
 
   if (!sub || /^[0-9<@]/.test(sub)) {
     await assertSelectedUserOrAdmin(message, guildRow);
-    const targetUser = sub ? await resolveUserFromArg(pool, sub) : await ensureUserRecord(pool, message.author.id);
+    const targetUser = sub ? await resolveUserFromArg(pool, sub) : await getOrCreateUser(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
 
     const progress = await getUserProgress(pool, guildRow.id, targetUser.id);
@@ -525,7 +551,7 @@ async function handleLeaderboard(message, context, guildRow, tokens) {
   const { pool } = context;
   await assertSelectedUser(message, guildRow);
   const limit = Number(tokens[0]) || 10;
-  const rows = await getLeaderboard(pool, guildRow, limit);
+  const rows = await getLeaderboard(pool, guildRow.id, limit);
   if (!rows.length) return message.reply('No XP data yet.');
   const description = rows
     .map((row, idx) => `${idx + 1}. <@${row.discord_user_id}> — Level ${row.level} (${row.xp} XP)`)
@@ -613,13 +639,15 @@ async function handleMemory(message, context, guildRow, tokens, rawText) {
 
   if (action === 'add') {
     if (!remainder) return message.reply('Provide memory content.');
-    const user = await ensureUserRecord(pool, message.author.id);
+    const user = await getOrCreateUser(pool, message.author.id);
     await addMemory(pool, guildRow.id, user.id, remainder);
     return message.reply('Memory stored.');
   }
 
   if (action === 'list') {
-    const targetUser = remainder ? await resolveUserFromArg(pool, remainder) : await ensureUserRecord(pool, message.author.id);
+    const targetUser = remainder
+      ? await resolveUserFromArg(pool, remainder)
+      : await getOrCreateUser(pool, message.author.id);
     if (!targetUser) return message.reply('User not found.');
     const entries = await listMemories(pool, guildRow.id, targetUser.id);
     if (!entries.length) return message.reply('No memories recorded.');
@@ -654,9 +682,14 @@ async function handleSettingsShow(message, context, guildRow) {
 
 async function handleResponseTrigger(message, context, guildRow, content) {
   const { pool, client } = context;
-  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(pool, message.guild, {
-    excludeUserId: message.author.id
-  });
+  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(
+    pool,
+    message.guild,
+    guildRow,
+    {
+      excludeUserId: message.author.id
+    }
+  );
   const discordName =
     nameMap.get(message.author.id) || getDiscordNameFallback(message, message.author.id) || message.author.tag;
   const userProfile = applyNameFallback(
@@ -700,6 +733,11 @@ export async function handlePrefixCommand(message, context, guildRow) {
   const withoutPrefix = content.slice(PREFIX.length).trim();
   if (!withoutPrefix) {
     await message.reply('Provide a command after the prefix.');
+    return true;
+  }
+
+  if (!isOwner(message)) {
+    await message.reply("This system command is only available to the bot's owner.");
     return true;
   }
 

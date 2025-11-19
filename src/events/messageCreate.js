@@ -1,5 +1,5 @@
 import { Events } from 'discord.js';
-import { ensureGuildRecord } from '../services/guildSettingsService.js';
+import { getOrCreateGuild } from '../services/guildSettingsService.js';
 import { getUserProfile } from '../services/profileService.js';
 import { addMemory, getRecentMemories } from '../services/memoryService.js';
 import { getRulesForGuild } from '../services/rulesService.js';
@@ -34,7 +34,7 @@ export async function execute(message, context) {
   if (message.author.bot) return;
   if (!message.guild) return;
 
-  const guildRow = await ensureGuildRecord(pool, message.guild.id);
+  const guildRow = await getOrCreateGuild(pool, message.guild.id);
   const selectedUserId = guildRow.selected_discord_user_id;
 
   const handled = await handlePrefixCommand(message, context, guildRow);
@@ -50,9 +50,14 @@ export async function execute(message, context) {
     return;
   }
 
-  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(pool, message.guild, {
-    excludeUserId: message.author.id
-  });
+  const { directory: guildDirectory, nameMap } = await buildGuildDirectory(
+    pool,
+    message.guild,
+    guildRow,
+    {
+      excludeUserId: message.author.id
+    }
+  );
 
   const discordName =
     nameMap.get(message.author.id) ||
